@@ -110,5 +110,8 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "external/SocialJax"]
 testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests that import SocialJax and run real episodes (slow)",
+]
