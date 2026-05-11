@@ -45,7 +45,8 @@ checkpoints/
 logs/
 outputs/
 results/
-evaluation/        # SocialJax MAPPO scripts write eval GIFs here
+# SocialJax MAPPO scripts write eval GIFs here:
+evaluation/
 
 # Circuit build artifacts (large; regenerate from sources — force-add with `git add -f` if needed)
 circuits/build/
