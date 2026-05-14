@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import pytest
 from flax.struct import dataclass as flax_dataclass
 
-from zkattribution.wrappers import AttributionWrapper, WrappedState
+from zkattribution.wrappers import AttributionWrapper, AttributionState
 
 
 @flax_dataclass
@@ -32,7 +32,7 @@ class FakeEnv:
         obs = {a: jnp.zeros(self.obs_shape, dtype=jnp.float32) for a in self.agents}
         return obs, FakeInnerState(counter=jnp.int32(0))
 
-    def step_env(self, key, state, actions):
+    def step(self, key, state, actions):
         obs = {a: jnp.zeros(self.obs_shape, dtype=jnp.float32) for a in self.agents}
         new_state = FakeInnerState(counter=state.counter + 1)
         return obs, new_state, jnp.zeros(self.num_agents), False, {}
@@ -85,7 +85,7 @@ class TestWindowDynamics:
         wrapper = AttributionWrapper(env, _all_events, window_size=5)
         _, ws = wrapper.reset(jax.random.PRNGKey(0))
         for _ in range(4):
-            _, ws, _, _, _ = wrapper.step_env(
+            _, ws, _, _, _ = wrapper.step(
                 jax.random.PRNGKey(1), ws, jnp.array([0, 1, 2])
             )
         # Still inside the first window (step_in_window = 4, not yet 5).
@@ -97,7 +97,7 @@ class TestWindowDynamics:
         wrapper = AttributionWrapper(env, _all_events, window_size=5)
         _, ws = wrapper.reset(jax.random.PRNGKey(0))
         for _ in range(5):
-            _, ws, _, _, _ = wrapper.step_env(
+            _, ws, _, _, _ = wrapper.step(
                 jax.random.PRNGKey(1), ws, jnp.array([0, 1, 2])
             )
         assert ws.current_alpha.tolist() == [1.0, 1.0, 1.0]
@@ -108,7 +108,7 @@ class TestWindowDynamics:
         wrapper = AttributionWrapper(env, _no_events, window_size=5)
         _, ws = wrapper.reset(jax.random.PRNGKey(0))
         for _ in range(5):
-            _, ws, _, _, _ = wrapper.step_env(
+            _, ws, _, _, _ = wrapper.step(
                 jax.random.PRNGKey(1), ws, jnp.array([0, 1, 2])
             )
         assert ws.current_alpha.tolist() == [0.0, 0.0, 0.0]
@@ -118,7 +118,7 @@ class TestWindowDynamics:
         wrapper = AttributionWrapper(env, _only_agent_zero, window_size=5)
         _, ws = wrapper.reset(jax.random.PRNGKey(0))
         for _ in range(5):
-            _, ws, _, _, _ = wrapper.step_env(
+            _, ws, _, _, _ = wrapper.step(
                 jax.random.PRNGKey(1), ws, jnp.array([0, 1, 2])
             )
         assert ws.current_alpha.tolist() == [1.0, 0.0, 0.0]
@@ -130,7 +130,7 @@ class TestEventBuffer:
         wrapper = AttributionWrapper(env, _only_agent_zero, window_size=5)
         _, ws = wrapper.reset(jax.random.PRNGKey(0))
         for step in range(3):
-            _, ws, _, _, _ = wrapper.step_env(
+            _, ws, _, _, _ = wrapper.step(
                 jax.random.PRNGKey(1), ws, jnp.array([0, 1, 2])
             )
             # Slot just written should match predicate output.
@@ -145,7 +145,7 @@ class TestAlphaInObs:
         _, ws = wrapper.reset(jax.random.PRNGKey(0))
         # First 3 steps fill the window; the 3rd returns obs with updated alpha.
         for _ in range(3):
-            obs, ws, _, _, _ = wrapper.step_env(
+            obs, ws, _, _, _ = wrapper.step(
                 jax.random.PRNGKey(1), ws, jnp.array([0, 1, 2])
             )
         # alpha = [1, 0, 0]. Each agent's obs has trailing 3 channels = alpha.

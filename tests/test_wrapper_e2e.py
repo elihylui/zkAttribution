@@ -48,7 +48,7 @@ def cleanup_wrapped_rollout():
             [_random_action(agent_rngs[i], num_actions) for i in range(num_agents)]
         )
         rng, step_rng = jax.random.split(rng)
-        obs, ws, _, _, _ = wrapper.step_env(step_rng, ws, actions)
+        obs, ws, _, _, _ = wrapper.step(step_rng, ws, actions)
         obs_traj.append(obs)
         alpha_traj.append(ws.current_alpha)
         step_traj.append(int(ws.step_in_window))
@@ -89,7 +89,7 @@ def harvest_wrapped_rollout():
             [_random_action(agent_rngs[i], num_actions) for i in range(num_agents)]
         )
         rng, step_rng = jax.random.split(rng)
-        obs, ws, _, _, _ = wrapper.step_env(step_rng, ws, actions)
+        obs, ws, _, _, _ = wrapper.step(step_rng, ws, actions)
         obs_traj.append(obs)
         alpha_traj.append(ws.current_alpha)
 
