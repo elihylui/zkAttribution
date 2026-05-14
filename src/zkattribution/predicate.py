@@ -16,6 +16,7 @@ This module has two layers:
 See docs/predicate.md for the precise specification and known limitations.
 """
 
+import jax
 import jax.numpy as jnp
 
 CLEAN_ACTION = 8
@@ -115,3 +116,59 @@ def harvest_event_from_state(
     row, col = int(loc_after[0]), int(loc_after[1])
     apples_after = apples_in_radius(state_after.grid, row, col, radius=radius)
     return harvest_event(inv_before, inv_after, apples_after, threshold=threshold)
+
+
+# ---------------------------------------------------------------------------
+# JAX-native batched predicates: jit-friendly, vmap-friendly. The env wrapper
+# (Stage 3) uses these inside the JAX hot loop. Each returns shape
+# (num_agents,) int8 of {0, 1}.
+# ---------------------------------------------------------------------------
+
+
+def cleanup_events_batch(state_before, state_after, actions: jnp.ndarray) -> jnp.ndarray:
+    """Per-step, per-agent Cleanup e_k. Returns shape (num_agents,) int8.
+
+    actions: shape (num_agents,) int
+    """
+    used_clean = actions == CLEAN_ACTION
+    dirt_before = jnp.sum(state_before.potential_dirt_and_dirt_label == DIRT_LABEL)
+    dirt_after = jnp.sum(state_after.potential_dirt_and_dirt_label == DIRT_LABEL)
+    dirt_decreased = dirt_after < dirt_before
+    return (used_clean & dirt_decreased).astype(jnp.int8)
+
+
+def apples_in_radius_batch(
+    grid: jnp.ndarray,
+    locs: jnp.ndarray,
+    radius: int = APPLE_NEIGHBOR_RADIUS,
+) -> jnp.ndarray:
+    """Vectorised apple count in Chebyshev radius around each agent.
+
+    grid: (H, W) env grid
+    locs: (num_agents, 2) or (num_agents, 3) — only the first two dims (row, col) are used
+    Returns: (num_agents,) int32
+    """
+    apple_mask = (grid == APPLE_LABEL).astype(jnp.int32)
+    padded = jnp.pad(apple_mask, radius)
+    patch_size = 2 * radius + 1
+    locs_rc = locs[:, :2].astype(jnp.int32)
+
+    def _count_at(loc):
+        patch = jax.lax.dynamic_slice(padded, loc, (patch_size, patch_size))
+        return jnp.sum(patch)
+
+    return jax.vmap(_count_at)(locs_rc)
+
+
+def harvest_events_batch(
+    state_before,
+    state_after,
+    radius: int = APPLE_NEIGHBOR_RADIUS,
+    threshold: int = 1,
+) -> jnp.ndarray:
+    """Per-step, per-agent Harvest:Open e_k. Returns shape (num_agents,) int8."""
+    inv_before = jnp.sum(state_before.agent_invs, axis=-1)
+    inv_after = jnp.sum(state_after.agent_invs, axis=-1)
+    inv_grew = inv_after > inv_before
+    apples_in_r = apples_in_radius_batch(state_after.grid, state_after.agent_locs, radius)
+    return (inv_grew & (apples_in_r >= threshold)).astype(jnp.int8)

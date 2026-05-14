@@ -8,12 +8,15 @@ from zkattribution.predicate import (
     CLEAN_ACTION,
     DIRT_LABEL,
     apples_in_radius,
+    apples_in_radius_batch,
     cleanup_dirt_count,
     cleanup_event,
     cleanup_event_from_state,
+    cleanup_events_batch,
     cooperation_rate,
     harvest_event,
     harvest_event_from_state,
+    harvest_events_batch,
 )
 
 
@@ -208,3 +211,91 @@ class TestHarvestEventFromState:
             agent_locs=jnp.array([[2, 1, 0]]),
         )
         assert harvest_event_from_state(before, after, agent_i=0) == 0
+
+
+class TestCleanupEventsBatch:
+    def test_per_agent_results(self):
+        # 4 dirt cells before, 2 after — dirt decreased.
+        before = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, DIRT_LABEL, DIRT_LABEL, 7]))
+        after = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, 7, 7, 7]))
+        # Agents: [zap_clean, up, zap_clean, down]
+        actions = jnp.array([CLEAN_ACTION, 4, CLEAN_ACTION, 5])
+        events = cleanup_events_batch(before, after, actions)
+        assert events.tolist() == [1, 0, 1, 0]
+
+    def test_no_dirt_decrease_no_event(self):
+        labels = jnp.array([DIRT_LABEL, DIRT_LABEL, DIRT_LABEL])
+        before = FakeCleanupState(labels)
+        after = FakeCleanupState(labels)
+        actions = jnp.array([CLEAN_ACTION, CLEAN_ACTION])
+        events = cleanup_events_batch(before, after, actions)
+        assert events.tolist() == [0, 0]
+
+    def test_all_agents_zapped_dirt_decreased(self):
+        before = FakeCleanupState(jnp.array([DIRT_LABEL] * 5))
+        after = FakeCleanupState(jnp.array([DIRT_LABEL] * 3 + [7] * 2))
+        actions = jnp.array([CLEAN_ACTION] * 3)
+        events = cleanup_events_batch(before, after, actions)
+        # All three "credited" under pragmatic v1 (known limitation).
+        assert events.tolist() == [1, 1, 1]
+
+
+class TestApplesInRadiusBatch:
+    def test_multi_agent_counts(self):
+        grid = jnp.zeros((5, 5), dtype=jnp.int16)
+        grid = grid.at[0, 0].set(APPLE_LABEL)
+        grid = grid.at[2, 2].set(APPLE_LABEL)
+        grid = grid.at[4, 4].set(APPLE_LABEL)
+        locs = jnp.array([[1, 1, 0], [3, 3, 0], [4, 0, 0]])
+        counts = apples_in_radius_batch(grid, locs, radius=1)
+        # (1,1) radius-1 neighborhood [0..2 × 0..2]: apples at (0,0) and (2,2) → 2
+        # (3,3) radius-1 [2..4 × 2..4]: apples at (2,2) and (4,4) → 2
+        # (4,0) radius-1 [3..5 × -1..1] clipped: no apples → 0
+        assert counts.tolist() == [2, 2, 0]
+
+    def test_matches_per_agent_reference(self):
+        grid = jnp.zeros((6, 6), dtype=jnp.int16)
+        grid = grid.at[1, 1].set(APPLE_LABEL)
+        grid = grid.at[3, 3].set(APPLE_LABEL)
+        grid = grid.at[5, 5].set(APPLE_LABEL)
+        locs = jnp.array([[2, 2, 0], [4, 4, 0], [0, 0, 0]])
+        batch_counts = apples_in_radius_batch(grid, locs, radius=2)
+        per_agent = jnp.array(
+            [apples_in_radius(grid, int(loc[0]), int(loc[1]), radius=2) for loc in locs]
+        )
+        assert batch_counts.tolist() == per_agent.tolist()
+
+
+class TestHarvestEventsBatch:
+    def test_one_harvested_one_didnt(self):
+        # Agent 0 walks (0,0) → (0,1); apple at (0,2) remains; inv grew.
+        # Agent 1 stays at (2,2); inv unchanged; doesn't matter what's nearby.
+        grid_after = jnp.zeros((4, 4), dtype=jnp.int16).at[0, 2].set(APPLE_LABEL)
+        before = FakeHarvestState(
+            grid=jnp.zeros((4, 4), dtype=jnp.int16),
+            agent_invs=jnp.array([[0, 0], [0, 0]]),
+            agent_locs=jnp.array([[0, 0, 0], [2, 2, 0]]),
+        )
+        after = FakeHarvestState(
+            grid=grid_after,
+            agent_invs=jnp.array([[1, 0], [0, 0]]),
+            agent_locs=jnp.array([[0, 1, 0], [2, 2, 0]]),
+        )
+        events = harvest_events_batch(before, after)
+        assert events.tolist() == [1, 0]
+
+    def test_harvested_but_emptied_patch(self):
+        # Last apple eaten; no others nearby.
+        grid_after = jnp.zeros((4, 4), dtype=jnp.int16)
+        before = FakeHarvestState(
+            grid=jnp.zeros((4, 4), dtype=jnp.int16),
+            agent_invs=jnp.array([[0, 0]]),
+            agent_locs=jnp.array([[1, 1, 0]]),
+        )
+        after = FakeHarvestState(
+            grid=grid_after,
+            agent_invs=jnp.array([[1, 0]]),
+            agent_locs=jnp.array([[1, 2, 0]]),
+        )
+        events = harvest_events_batch(before, after)
+        assert events.tolist() == [0]

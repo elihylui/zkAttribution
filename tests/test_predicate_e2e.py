@@ -13,10 +13,12 @@ import pytest
 
 from zkattribution.predicate import (
     CLEAN_ACTION,
-    cleanup_event_from_state,
     cleanup_dirt_count,
+    cleanup_event_from_state,
+    cleanup_events_batch,
     cooperation_rate,
     harvest_event_from_state,
+    harvest_events_batch,
 )
 
 
@@ -163,3 +165,44 @@ class TestHarvestEndToEnd:
                         f"agent {i} step {t}: inv unchanged ({inv_before}->{inv_after}) "
                         f"but e_k={e_k}"
                     )
+
+
+@pytest.mark.e2e
+class TestBatchedPredicatesJit:
+    """Confirm the JAX-native batched predicates trace under jit and agree with
+    the host-side reference functions on real SocialJax states."""
+
+    def test_cleanup_events_batch_jit_matches_reference(self, cleanup_rollout):
+        states = cleanup_rollout["states"]
+        actions_per_step = cleanup_rollout["actions_per_step"]
+        num_agents = cleanup_rollout["num_agents"]
+
+        jitted = jax.jit(cleanup_events_batch)
+
+        # Sample 10 evenly-spaced steps.
+        for t in range(0, NUM_STEPS, NUM_STEPS // 10):
+            actions = jnp.stack(actions_per_step[t])
+            batch_out = jitted(states[t], states[t + 1], actions)
+            reference = [
+                cleanup_event_from_state(states[t], states[t + 1], int(actions[i]))
+                for i in range(num_agents)
+            ]
+            assert batch_out.tolist() == reference, (
+                f"step {t}: jit batch {batch_out.tolist()} != reference {reference}"
+            )
+
+    def test_harvest_events_batch_jit_matches_reference(self, harvest_rollout):
+        states = harvest_rollout["states"]
+        num_agents = harvest_rollout["num_agents"]
+
+        jitted = jax.jit(harvest_events_batch)
+
+        for t in range(0, NUM_STEPS, NUM_STEPS // 10):
+            batch_out = jitted(states[t], states[t + 1])
+            reference = [
+                harvest_event_from_state(states[t], states[t + 1], agent_i=i)
+                for i in range(num_agents)
+            ]
+            assert batch_out.tolist() == reference, (
+                f"step {t}: jit batch {batch_out.tolist()} != reference {reference}"
+            )
