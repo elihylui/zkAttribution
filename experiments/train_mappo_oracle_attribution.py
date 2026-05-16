@@ -570,7 +570,9 @@ def single_run(config):
     out = jax.vmap(train_jit)(rngs)
 
     print("** Saving Results **")
-    filename = f'{config["ENV_NAME"]}_seed{config["SEED"]}_reward_{config["REWARD"]}'
+    # Regime-prefixed so it never collides with the no-attribution baseline's
+    # checkpoint (which the SocialJax script writes to the un-prefixed name).
+    filename = f'oracle_attribution_{config["ENV_NAME"]}_seed{config["SEED"]}_reward_{config["REWARD"]}'
     train_state = jax.tree_map(lambda x: x[0], out["runner_state"][0][0][0])
     save_path = f"./checkpoints/{filename}.pkl"
     save_params(train_state, save_path)
@@ -612,7 +614,7 @@ def evaluate(params, env, save_path, config):
     pics = []
     img = env.render(state)
     pics.append(img)
-    root_dir = f"evaluation/cleanup"
+    root_dir = f"evaluation/oracle_attribution_cleanup"
     path = Path(root_dir + "/state_pics")
     path.mkdir(parents=True, exist_ok=True)
 

@@ -178,6 +178,15 @@ class AttributionWrapper:
             current_alpha=alpha_next,
         )
 
+        # Surface alpha into `info` so training loops log the attribution signal.
+        # `alpha` (per-agent) -> logged as mean alpha; `alpha_std` -> cross-agent
+        # spread (is the signal varied, or flat/useless?).
+        info = dict(info)
+        info["alpha"] = alpha_next
+        info["alpha_std"] = jnp.full(
+            (self._env.num_agents,), jnp.std(alpha_next), dtype=jnp.float32
+        )
+
         return self._augment_obs(obs, alpha_next), state_next, reward, done, info
 
     @staticmethod
