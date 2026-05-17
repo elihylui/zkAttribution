@@ -107,7 +107,9 @@ class TestCleanupEndToEnd:
 
         for i in range(num_agents):
             events = [
-                cleanup_event_from_state(states[t], states[t + 1], actions_per_step[t][i])
+                cleanup_event_from_state(
+                    states[t], states[t + 1], i, actions_per_step[t][i]
+                )
                 for t in range(NUM_STEPS)
             ]
             alpha = cooperation_rate(events)
@@ -123,7 +125,7 @@ class TestCleanupEndToEnd:
             for i in range(num_agents):
                 action = int(actions_per_step[t][i])
                 if action != CLEAN_ACTION:
-                    e_k = cleanup_event_from_state(states[t], states[t + 1], action)
+                    e_k = cleanup_event_from_state(states[t], states[t + 1], i, action)
                     assert e_k == 0, (
                         f"agent {i} step {t}: action {action} (not zap_clean) but e_k={e_k}"
                     )
@@ -184,7 +186,7 @@ class TestBatchedPredicatesJit:
             actions = jnp.stack(actions_per_step[t])
             batch_out = jitted(states[t], states[t + 1], actions)
             reference = [
-                cleanup_event_from_state(states[t], states[t + 1], int(actions[i]))
+                cleanup_event_from_state(states[t], states[t + 1], i, int(actions[i]))
                 for i in range(num_agents)
             ]
             assert batch_out.tolist() == reference, (

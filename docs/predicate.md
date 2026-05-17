@@ -10,18 +10,21 @@ This document defines `e_k` for both target environments. Implementation: [`src/
 
 ## Cleanup
 
-**Definition (v1 — pragmatic):**
+**Definition (v2 — per-agent beam attribution):**
 
 ```
-e_k(i) = 1   iff   action_i == zap_clean   AND   dirt_count_after < dirt_count_before
+e_k(i) = 1   iff   action_i == zap_clean   AND   agent i's beam covers ≥1 dirt tile (pre-step)
 ```
 
 Where:
 
 - `zap_clean` is `Actions.zap_clean = 8` in [`external/SocialJax/socialjax/environments/cleanup/clean_up.py`](../external/SocialJax/socialjax/environments/cleanup/clean_up.py).
-- `dirt_count = Σ [state.potential_dirt_and_dirt_label == Items.dirt]`, where `Items.dirt = 8`.
+- An agent's **beam footprint** is the 4 tiles its `zap_clean` covers — one-step-forward, two-step-forward, forward-right, forward-left — mirrored from `clean_up.py`'s `_interact` (STEP table + target geometry). Right/left collapse to one-step-forward when out of bounds; off-grid tiles are masked out.
+- "Beam covers dirt" is equivalent to "this agent cleans a tile": Cleanup's clean mechanic converts *any* in-beam dirt tile (`grid == Items.dirt = 8`) to clean. So beam-hit is a faithful, per-agent "successful clean".
 
-**Known limitation:** if multiple agents fire `zap_clean` in the same step and the global dirt count decreases, all such agents receive `e_k = 1` — even though only one (or some) actually cleaned. Strict per-agent attribution would require reading the beam-hit logic in `clean_up.py` (around lines 1056–1061) or adding a per-agent `cleaned_count[i]` field to `info`. Deferred to v2.
+**Why v2 replaced v1.** The v1 predicate was `action_i == zap_clean AND total dirt count strictly decreased`. The total dirt count is a *global* quantity, and Cleanup spawns pollution every step (`dirtSpawnProbability = 0.5`) — so an agent can successfully clean a tile yet see `dirt_after ≥ dirt_before` because dirt spawned elsewhere. A 2e5-timestep diagnostic confirmed this: logged α peaked at **0.033** (signal in the noise floor). v1 is kept in code as `cleanup_events_batch_global_delta` / `cleanup_event_from_state_global_delta` *only* so the confound can be measured; it is not the live predicate.
+
+**Known limitation (v2):** if two agents' beams overlap the same dirt tile, both are credited `e_k = 1`. Acceptable — both contributed a zap that would clean it.
 
 ## Harvest:Open
 

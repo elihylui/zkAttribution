@@ -9,10 +9,14 @@ from zkattribution.predicate import (
     DIRT_LABEL,
     apples_in_radius,
     apples_in_radius_batch,
+    cleanup_beam_hits_dirt,
+    cleanup_beam_tiles,
     cleanup_dirt_count,
     cleanup_event,
     cleanup_event_from_state,
+    cleanup_event_from_state_global_delta,
     cleanup_events_batch,
+    cleanup_events_batch_global_delta,
     cooperation_rate,
     harvest_event,
     harvest_event_from_state,
@@ -22,7 +26,11 @@ from zkattribution.predicate import (
 
 @dataclass
 class FakeCleanupState:
-    potential_dirt_and_dirt_label: jnp.ndarray
+    # All optional: v1 (_global_delta) tests use potential_dirt_and_dirt_label;
+    # v2 beam tests use grid + agent_locs.
+    potential_dirt_and_dirt_label: jnp.ndarray = None
+    grid: jnp.ndarray = None
+    agent_locs: jnp.ndarray = None
 
 
 @dataclass
@@ -115,22 +123,87 @@ class TestCleanupDirtCount:
         assert cleanup_dirt_count(FakeCleanupState(labels)) == 4
 
 
+class TestCleanupBeam:
+    """Beam geometry, mirrored from clean_up.py `_interact`."""
+
+    def test_beam_tiles_facing_up(self):
+        # orientation 0 = up = (+1, 0)
+        rows, cols, in_bounds = cleanup_beam_tiles(jnp.array([5, 5, 0]), 10, 10)
+        # one=(6,5) two=(7,5) right=(6,6) left=(6,4)
+        assert list(zip(rows.tolist(), cols.tolist())) == [(6, 5), (7, 5), (6, 6), (6, 4)]
+        assert in_bounds.tolist() == [True, True, True, True]
+
+    def test_beam_tiles_facing_right(self):
+        # orientation 1 = right = (0, +1)
+        rows, cols, _ = cleanup_beam_tiles(jnp.array([5, 5, 1]), 10, 10)
+        # one=(5,6) two=(5,7) right=(4,6) left=(6,6)
+        assert list(zip(rows.tolist(), cols.tolist())) == [(5, 6), (5, 7), (4, 6), (6, 6)]
+
+    def test_beam_tiles_out_of_bounds_masked(self):
+        # Corner agent (0,0) facing down (orient 2 = (-1,0)): whole beam off-grid.
+        _, _, in_bounds = cleanup_beam_tiles(jnp.array([0, 0, 2]), 5, 5)
+        assert in_bounds.tolist() == [False, False, False, False]
+
+    def test_beam_hits_dirt_on_two_step_tile(self):
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[7, 5].set(DIRT_LABEL)
+        assert bool(cleanup_beam_hits_dirt(grid, jnp.array([5, 5, 0]))) is True
+
+    def test_beam_hits_dirt_false_when_clear(self):
+        grid = jnp.zeros((10, 10), dtype=jnp.int16)
+        assert bool(cleanup_beam_hits_dirt(grid, jnp.array([5, 5, 0]))) is False
+
+
 class TestCleanupEventFromState:
-    def test_clean_action_and_dirt_decreased(self):
-        before = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, DIRT_LABEL, 7]))
-        after = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, 7, 7]))
-        assert cleanup_event_from_state(before, after, action_i=CLEAN_ACTION) == 1
+    """v2 reference predicate — agent's zap_clean beam covers a dirt tile."""
 
-    def test_no_clean_action_even_if_dirt_decreased(self):
-        before = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, DIRT_LABEL]))
-        after = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, 7]))
-        assert cleanup_event_from_state(before, after, action_i=4) == 0  # up, not clean
+    def test_beam_hits_dirt_credits_event(self):
+        # Agent 0 at (5,5) facing up; dirt at (6,5) = one-step-forward.
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[6, 5].set(DIRT_LABEL)
+        state = FakeCleanupState(grid=grid, agent_locs=jnp.array([[5, 5, 0]]))
+        assert cleanup_event_from_state(state, state, agent_i=0, action_i=CLEAN_ACTION) == 1
 
-    def test_clean_action_but_dirt_unchanged(self):
-        labels = jnp.array([DIRT_LABEL, DIRT_LABEL, 7])
-        before = FakeCleanupState(labels)
-        after = FakeCleanupState(labels)
-        assert cleanup_event_from_state(before, after, action_i=CLEAN_ACTION) == 0
+    def test_beam_misses_dirt_no_event(self):
+        # Dirt nowhere near the beam.
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[0, 0].set(DIRT_LABEL)
+        state = FakeCleanupState(grid=grid, agent_locs=jnp.array([[5, 5, 0]]))
+        assert cleanup_event_from_state(state, state, agent_i=0, action_i=CLEAN_ACTION) == 0
+
+    def test_no_clean_action_no_event(self):
+        # Beam would cover dirt, but the agent didn't fire zap_clean.
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[6, 5].set(DIRT_LABEL)
+        state = FakeCleanupState(grid=grid, agent_locs=jnp.array([[5, 5, 0]]))
+        assert cleanup_event_from_state(state, state, agent_i=0, action_i=4) == 0  # 'up'
+
+    def test_dirt_on_agent_tile_is_not_in_beam(self):
+        # Dirt on the agent's own cell — the beam starts one step forward.
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[5, 5].set(DIRT_LABEL)
+        state = FakeCleanupState(grid=grid, agent_locs=jnp.array([[5, 5, 0]]))
+        assert cleanup_event_from_state(state, state, agent_i=0, action_i=CLEAN_ACTION) == 0
+
+
+class TestCleanupGlobalDeltaV1:
+    """v1 predicate (flawed — global dirt-count delta). Kept only so the
+    confound can be measured against v2; not the live predicate."""
+
+    def test_batch_credits_on_global_decrease(self):
+        before = FakeCleanupState(
+            potential_dirt_and_dirt_label=jnp.array([DIRT_LABEL] * 4 + [7])
+        )
+        after = FakeCleanupState(
+            potential_dirt_and_dirt_label=jnp.array([DIRT_LABEL] * 2 + [7] * 3)
+        )
+        events = cleanup_events_batch_global_delta(before, after, jnp.array([CLEAN_ACTION, 4]))
+        assert events.tolist() == [1, 0]
+
+    def test_from_state_global_delta(self):
+        before = FakeCleanupState(
+            potential_dirt_and_dirt_label=jnp.array([DIRT_LABEL] * 3)
+        )
+        after = FakeCleanupState(
+            potential_dirt_and_dirt_label=jnp.array([DIRT_LABEL] * 2 + [7])
+        )
+        assert cleanup_event_from_state_global_delta(before, after, action_i=CLEAN_ACTION) == 1
+        assert cleanup_event_from_state_global_delta(before, after, action_i=4) == 0
 
 
 class TestApplesInRadius:
@@ -214,30 +287,29 @@ class TestHarvestEventFromState:
 
 
 class TestCleanupEventsBatch:
-    def test_per_agent_results(self):
-        # 4 dirt cells before, 2 after — dirt decreased.
-        before = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, DIRT_LABEL, DIRT_LABEL, 7]))
-        after = FakeCleanupState(jnp.array([DIRT_LABEL, DIRT_LABEL, 7, 7, 7]))
-        # Agents: [zap_clean, up, zap_clean, down]
-        actions = jnp.array([CLEAN_ACTION, 4, CLEAN_ACTION, 5])
-        events = cleanup_events_batch(before, after, actions)
-        assert events.tolist() == [1, 0, 1, 0]
+    """v2 batched predicate — per-agent beam-hit attribution."""
 
-    def test_no_dirt_decrease_no_event(self):
-        labels = jnp.array([DIRT_LABEL, DIRT_LABEL, DIRT_LABEL])
-        before = FakeCleanupState(labels)
-        after = FakeCleanupState(labels)
-        actions = jnp.array([CLEAN_ACTION, CLEAN_ACTION])
-        events = cleanup_events_batch(before, after, actions)
-        assert events.tolist() == [0, 0]
+    def test_per_agent_beam_attribution(self):
+        # Agent 0 (5,5,up): beam covers (6,5) -> dirt -> hit.
+        # Agent 1 (2,2,right): beam {(2,3),(2,4),(1,3),(3,3)} -> no dirt -> miss.
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[6, 5].set(DIRT_LABEL)
+        state = FakeCleanupState(grid=grid, agent_locs=jnp.array([[5, 5, 0], [2, 2, 1]]))
+        events = cleanup_events_batch(state, state, jnp.array([CLEAN_ACTION, CLEAN_ACTION]))
+        assert events.tolist() == [1, 0]
 
-    def test_all_agents_zapped_dirt_decreased(self):
-        before = FakeCleanupState(jnp.array([DIRT_LABEL] * 5))
-        after = FakeCleanupState(jnp.array([DIRT_LABEL] * 3 + [7] * 2))
-        actions = jnp.array([CLEAN_ACTION] * 3)
-        events = cleanup_events_batch(before, after, actions)
-        # All three "credited" under pragmatic v1 (known limitation).
-        assert events.tolist() == [1, 1, 1]
+    def test_clean_action_gates_event(self):
+        # Beam covers dirt, but agent fired 'up' not zap_clean.
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[6, 5].set(DIRT_LABEL)
+        state = FakeCleanupState(grid=grid, agent_locs=jnp.array([[5, 5, 0]]))
+        events = cleanup_events_batch(state, state, jnp.array([4]))
+        assert events.tolist() == [0]
+
+    def test_overlapping_beams_both_credited(self):
+        # Agent A (5,5,up) and agent B (7,5,down) both have (6,5) as one-step.
+        grid = jnp.zeros((10, 10), dtype=jnp.int16).at[6, 5].set(DIRT_LABEL)
+        state = FakeCleanupState(grid=grid, agent_locs=jnp.array([[5, 5, 0], [7, 5, 2]]))
+        events = cleanup_events_batch(state, state, jnp.array([CLEAN_ACTION, CLEAN_ACTION]))
+        assert events.tolist() == [1, 1]
 
 
 class TestApplesInRadiusBatch:
