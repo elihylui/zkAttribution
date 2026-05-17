@@ -10,7 +10,12 @@ import jax.numpy as jnp
 import pytest
 from flax.struct import dataclass as flax_dataclass
 
-from zkattribution.wrappers import AttributionWrapper, AttributionState
+from zkattribution.wrappers import (
+    AttributionState,
+    AttributionWrapper,
+    SelfReportState,
+    SelfReportWrapper,
+)
 
 
 @flax_dataclass
@@ -153,3 +158,73 @@ class TestAlphaInObs:
             # Take the last 3 channels at any spatial position; they should equal alpha.
             assert v[0, 0, -3:].tolist() == [1.0, 0.0, 0.0]
             assert v[1, 1, -3:].tolist() == [1.0, 0.0, 0.0]
+
+
+# --- Stage 4: SelfReportWrapper ---------------------------------------------
+
+
+class TestSelfReportReset:
+    def test_initial_state_is_zero(self):
+        env = FakeEnv(num_agents=3)
+        w = SelfReportWrapper(env, _no_events, window_size=4)
+        _, st = w.reset(jax.random.PRNGKey(0))
+        assert isinstance(st, SelfReportState)
+        assert st.broadcast_claims.tolist() == [0.0, 0.0, 0.0]
+        assert st.true_alpha.tolist() == [0.0, 0.0, 0.0]
+        assert int(st.step_in_window) == 0
+
+    def test_obs_augmented_with_claim_channels(self):
+        env = FakeEnv(num_agents=3, obs_shape=(2, 2, 4))
+        w = SelfReportWrapper(env, _no_events)
+        obs, _ = w.reset(jax.random.PRNGKey(0))
+        for v in obs.values():
+            assert v.shape == (2, 2, 7)  # original 4 + 3 claim channels
+
+
+class TestSelfReportClaims:
+    def test_claims_broadcast_at_window_boundary(self):
+        env = FakeEnv(num_agents=3)
+        w = SelfReportWrapper(env, _no_events, window_size=3, num_claim_buckets=11)
+        _, st = w.reset(jax.random.PRNGKey(0))
+        # claim buckets 5, 10, 0 -> claimed alpha 0.5, 1.0, 0.0
+        action = (jnp.array([0, 1, 2]), jnp.array([5, 10, 0]))
+        for _ in range(3):
+            _, st, _, _, _ = w.step(jax.random.PRNGKey(1), st, action)
+        assert st.broadcast_claims.tolist() == pytest.approx([0.5, 1.0, 0.0])
+        assert int(st.step_in_window) == 0
+
+    def test_claims_constant_within_window(self):
+        env = FakeEnv(num_agents=3)
+        w = SelfReportWrapper(env, _no_events, window_size=5)
+        _, st = w.reset(jax.random.PRNGKey(0))
+        action = (jnp.array([0, 1, 2]), jnp.array([10, 10, 10]))
+        for _ in range(4):  # inside the first window — no boundary yet
+            _, st, _, _, _ = w.step(jax.random.PRNGKey(1), st, action)
+        assert st.broadcast_claims.tolist() == [0.0, 0.0, 0.0]
+
+
+class TestSelfReportTrueAlpha:
+    def test_inflation_is_claimed_minus_true(self):
+        # _all_events -> true alpha = 1.0; claim bucket 0 -> 0.0; inflation = -1.0.
+        env = FakeEnv(num_agents=3)
+        w = SelfReportWrapper(env, _all_events, window_size=2)
+        _, st = w.reset(jax.random.PRNGKey(0))
+        action = (jnp.array([0, 0, 0]), jnp.array([0, 0, 0]))
+        for _ in range(2):
+            _, st, _, _, info = w.step(jax.random.PRNGKey(1), st, action)
+        assert st.true_alpha.tolist() == [1.0, 1.0, 1.0]
+        assert st.broadcast_claims.tolist() == [0.0, 0.0, 0.0]
+        assert info["inflation"].tolist() == pytest.approx([-1.0, -1.0, -1.0])
+
+    def test_obs_shows_claimed_not_true_alpha(self):
+        # The agents must observe the CLAIMED alpha, never the true alpha.
+        # true alpha = 1.0 (all events); claim bucket 0 -> 0.0.
+        env = FakeEnv(num_agents=3, obs_shape=(2, 2, 4))
+        w = SelfReportWrapper(env, _all_events, window_size=2)
+        _, st = w.reset(jax.random.PRNGKey(0))
+        action = (jnp.array([0, 0, 0]), jnp.array([0, 0, 0]))
+        for _ in range(2):
+            obs, st, _, _, _ = w.step(jax.random.PRNGKey(1), st, action)
+        for v in obs.values():
+            # Trailing 3 channels = broadcast claims [0,0,0], NOT true alpha [1,1,1].
+            assert v[0, 0, -3:].tolist() == [0.0, 0.0, 0.0]
