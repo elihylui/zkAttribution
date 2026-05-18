@@ -111,11 +111,16 @@ class Actor(nn.Module):
         )(hidden)
         pi = distrax.Categorical(logits=action_logits)
 
-        # Stage 4 self-report: a second Categorical head over claim buckets, so
-        # the agent's claimed alpha is a learned action.
+        # Stage 4 self-report: a second Categorical head over claim buckets.
+        # `stop_gradient` on the trunk features — the claim head reads the
+        # shared representation but its gradients do NOT flow back into the
+        # CNN/trunk. This isolates the env-action policy from the claim head:
+        # without it, an unlearnable claim head injects gradient noise into the
+        # shared trunk and the env policy never learns to clean (the two-head
+        # negative-transfer artifact diagnosed in the v1 gate-check sweep).
         claim_logits = nn.Dense(
             self.num_claim_buckets, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
-        )(hidden)
+        )(jax.lax.stop_gradient(hidden))
         pi_claim = distrax.Categorical(logits=claim_logits)
 
         return pi, pi_claim

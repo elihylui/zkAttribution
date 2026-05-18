@@ -70,6 +70,29 @@ Quantitative measurement of whether agents learn to lie and whether lying corrup
 - Policy: `Actor` emits both heads; sampled action has the right structure; log-prob sums correctly.
 - e2e smoke: wrap real Cleanup, run a short rollout, verify claimed + true α both logged.
 
+## Update — two-head artifact found in the v1 gate-check (2026-05-18)
+
+The first 1e8 gate-check sweep showed the self-reported regime *collapsing*: the
+river stayed ~9% clean, return ~0, while no-attribution and oracle reached ~66%.
+Scrutiny (thread-2) traced this to a **training artifact, not a real result**:
+
+- The env policy never learned to clean (collapsed early, never recovered).
+- The claim head never learned (`claimed_alpha` flat at the uniform mean ~0.5).
+- Oracle uses the *same* 26-channel augmented obs but a single-head policy, and
+  it trained fine → the cause is the **two-head architecture**: the claim head,
+  sharing the CNN trunk, injected gradient noise that degraded the env policy
+  (negative transfer / gradient interference).
+
+**Fix applied:** `jax.lax.stop_gradient` on the trunk features feeding the claim
+head — the claim head reads the shared representation but cannot backprop into
+the trunk, so it can no longer corrupt the env-action policy.
+
+**Still open (issue 2):** the claim head has no real learning signal — claiming
+barely affects reward, so it can't learn *strategic* lying. Studying lying
+properly needs claiming to be incentivised (peers conditioning on claims). The
+stop-gradient fix makes the regime *not broken*; it does not by itself make
+"agents learn to lie" measurable.
+
 ## Out of scope
 
 - Verification / crypto (Stage 5).
