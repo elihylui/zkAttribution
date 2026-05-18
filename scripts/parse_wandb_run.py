@@ -39,8 +39,12 @@ def find_wandb_file(path: str) -> str:
         return path
     matches = glob.glob(os.path.join(path, "run-*.wandb"))
     if not matches:
+        # Fall back to a recursive search (e.g. path is a run dir whose
+        # datastore lives under wandb/offline-run-*/).
+        matches = glob.glob(os.path.join(path, "**", "run-*.wandb"), recursive=True)
+    if not matches:
         raise FileNotFoundError(f"no run-*.wandb datastore found under {path}")
-    return matches[0]
+    return sorted(matches)[-1]
 
 
 def read_history(wandb_file: str) -> list[dict]:
