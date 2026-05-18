@@ -33,9 +33,9 @@ import time
 
 import modal
 
-# Approximate Modal A10 GPU rate ($/hr) — only used for the printed cost
+# Approximate Modal A100-40GB GPU rate ($/hr) — only for the printed cost
 # estimate; the actual bill is whatever Modal charges per-second.
-_A10_USD_PER_HR = 1.10
+_GPU_USD_PER_HR = 2.10
 
 CUDA_JAX_FIND_LINKS = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
 
@@ -80,25 +80,31 @@ _SCRIPTS = {
 
 
 @app.function(
-    gpu="A10",
+    gpu="A100-40GB",
     image=image,
     volumes={"/results": volume},
     timeout=6 * 60 * 60,
 )
 def run_regime(regime: str, seed: int, total_timesteps: int) -> dict:
     """Train one (regime, seed) on a GPU; wandb-offline output -> the Volume."""
-    import glob
     import os
+    import shutil
     import subprocess
 
     # Reward mode is in the dir name so shared/individual runs never collide.
     run_dir = f"/results/{regime}_{REWARD_TAG}_seed{seed}"
+    done_marker = os.path.join(run_dir, "RUN_COMPLETE")
 
-    # Idempotent: if this exact run already completed on the Volume, skip it
-    # (so the sweep doesn't redo the baseline run done during calibration).
+    # Idempotent skip — ONLY if a *completed* run exists. The sentinel below is
+    # written after training fully succeeds; a bare wandb/ dir is not enough
+    # (a preempted attempt leaves a partial one, which would falsely "skip").
     volume.reload()
-    if glob.glob(f"{run_dir}/wandb/offline-run-*"):
+    if os.path.exists(done_marker):
         return {"regime": regime, "seed": seed, "minutes": 0.0, "skipped": True}
+
+    # Fresh run: wipe any partial state left by a preempted attempt.
+    if os.path.exists(run_dir):
+        shutil.rmtree(run_dir)
     os.makedirs(run_dir, exist_ok=True)
 
     env = dict(os.environ)
@@ -124,6 +130,11 @@ def run_regime(regime: str, seed: int, total_timesteps: int) -> dict:
         check=True,
     )
     minutes = (time.time() - started) / 60.0
+
+    # Sentinel: written only after the subprocess fully succeeded, so a
+    # preemption + restart re-trains instead of falsely skipping.
+    with open(done_marker, "w") as marker:
+        marker.write(f"{regime} seed{seed} {minutes:.1f}min\n")
     volume.commit()
     return {"regime": regime, "seed": seed, "minutes": round(minutes, 1), "skipped": False}
 
@@ -132,11 +143,11 @@ def run_regime(regime: str, seed: int, total_timesteps: int) -> dict:
 def main(mode: str = "calibration", seeds: int = 2, total_timesteps: int = 100_000_000):
     if mode == "calibration":
         print(f"Calibration: one no-attribution run ({REWARD_TAG} rewards) at "
-              f"{total_timesteps:,} timesteps on an A10 GPU...\n")
+              f"{total_timesteps:,} timesteps on an A100 GPU...\n")
         result = run_regime.remote("no_attribution", 0, total_timesteps)
         minutes = result["minutes"]
-        per_run_usd = (minutes / 60.0) * _A10_USD_PER_HR
-        print(f"\n  per-run: {minutes:.1f} min  (~${per_run_usd:.2f} on an A10)")
+        per_run_usd = (minutes / 60.0) * _GPU_USD_PER_HR
+        print(f"\n  per-run: {minutes:.1f} min  (~${per_run_usd:.2f} on an A100)")
         print(f"  full sweep estimate (3 regimes x {seeds} seeds = {3 * seeds} runs): "
               f"~${per_run_usd * 3 * seeds:.2f}")
         print("\n  If that fits the budget, launch the sweep:")
@@ -147,7 +158,7 @@ def main(mode: str = "calibration", seeds: int = 2, total_timesteps: int = 100_0
         regimes = ["no_attribution", "oracle", "self_reported"]
         jobs = [(r, s, total_timesteps) for r in regimes for s in range(seeds)]
         print(f"Sweep: {len(jobs)} runs ({len(regimes)} regimes x {seeds} seeds) "
-              "in parallel on A10 GPUs...\n")
+              "in parallel on A100 GPUs...\n")
         for result in run_regime.starmap(jobs):
             status = "skipped (already done)" if result.get("skipped") else (
                 f"{result['minutes']:.1f} min")
