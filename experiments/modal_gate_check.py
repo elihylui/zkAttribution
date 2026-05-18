@@ -39,6 +39,13 @@ _A10_USD_PER_HR = 1.10
 
 CUDA_JAX_FIND_LINKS = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
 
+# Reward mode. The brief/proposal want a real social dilemma — agents
+# individually tempted to free-ride — which is INDIVIDUAL rewards. SocialJax's
+# MAPPO config defaults to shared (team) rewards, which mutes the dilemma; we
+# override it via the hydra arg `ENV_KWARGS.shared_rewards`.
+SHARED_REWARDS = False
+REWARD_TAG = "shared" if SHARED_REWARDS else "individual"
+
 # Image: CUDA 11.8 + cuDNN 8 base (mirrors the GPU setup SocialJax's README
 # documents), Python 3.10, all deps from SocialJax's requirements.txt, then
 # jaxlib swapped to the CUDA build. The repo code is mounted for runtime.
@@ -80,10 +87,18 @@ _SCRIPTS = {
 )
 def run_regime(regime: str, seed: int, total_timesteps: int) -> dict:
     """Train one (regime, seed) on a GPU; wandb-offline output -> the Volume."""
+    import glob
     import os
     import subprocess
 
-    run_dir = f"/results/{regime}_seed{seed}"
+    # Reward mode is in the dir name so shared/individual runs never collide.
+    run_dir = f"/results/{regime}_{REWARD_TAG}_seed{seed}"
+
+    # Idempotent: if this exact run already completed on the Volume, skip it
+    # (so the sweep doesn't redo the baseline run done during calibration).
+    volume.reload()
+    if glob.glob(f"{run_dir}/wandb/offline-run-*"):
+        return {"regime": regime, "seed": seed, "minutes": 0.0, "skipped": True}
     os.makedirs(run_dir, exist_ok=True)
 
     env = dict(os.environ)
@@ -102,6 +117,7 @@ def run_regime(regime: str, seed: int, total_timesteps: int) -> dict:
             f"TOTAL_TIMESTEPS={total_timesteps}",
             "NUM_ENVS=64",
             "WANDB_MODE=offline",
+            f"ENV_KWARGS.shared_rewards={SHARED_REWARDS}",
         ],
         cwd=run_dir,
         env=env,
@@ -109,13 +125,13 @@ def run_regime(regime: str, seed: int, total_timesteps: int) -> dict:
     )
     minutes = (time.time() - started) / 60.0
     volume.commit()
-    return {"regime": regime, "seed": seed, "minutes": round(minutes, 1)}
+    return {"regime": regime, "seed": seed, "minutes": round(minutes, 1), "skipped": False}
 
 
 @app.local_entrypoint()
 def main(mode: str = "calibration", seeds: int = 2, total_timesteps: int = 100_000_000):
     if mode == "calibration":
-        print("Calibration: one no-attribution run at "
+        print(f"Calibration: one no-attribution run ({REWARD_TAG} rewards) at "
               f"{total_timesteps:,} timesteps on an A10 GPU...\n")
         result = run_regime.remote("no_attribution", 0, total_timesteps)
         minutes = result["minutes"]
@@ -133,8 +149,9 @@ def main(mode: str = "calibration", seeds: int = 2, total_timesteps: int = 100_0
         print(f"Sweep: {len(jobs)} runs ({len(regimes)} regimes x {seeds} seeds) "
               "in parallel on A10 GPUs...\n")
         for result in run_regime.starmap(jobs):
-            print(f"  done: {result['regime']} seed{result['seed']} "
-                  f"-> {result['minutes']:.1f} min")
+            status = "skipped (already done)" if result.get("skipped") else (
+                f"{result['minutes']:.1f} min")
+            print(f"  {result['regime']} seed{result['seed']} -> {status}")
         print("\n  Retrieve results:  modal volume get zkattr-gate-check / ./modal_results")
         return
 

@@ -23,11 +23,14 @@ import sys
 
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+sys.path.insert(0, os.path.join(_REPO, "src"))
 sys.path.insert(0, os.path.join(_REPO, "external", "SocialJax"))
 
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import socialjax  # noqa: E402
+
+from zkattribution.predicate import cleanup_events_batch  # noqa: E402
 
 
 def _load_actor_class():
@@ -50,23 +53,30 @@ def rollout(env, apply_fn, params, num_agents, n_steps, seed):
 
     cleaned_water = []
     collective_return = 0.0
+    per_agent_events = jnp.zeros(num_agents, dtype=jnp.int32)
     for _ in range(n_steps):
         obs_batch = jnp.stack([obs[a] for a in env.agents]).reshape(-1, *obs_shape)
         pi = apply_fn(params, obs_batch)
         rng, action_key = jax.random.split(rng)
         actions = pi.sample(seed=action_key)
         rng, step_key = jax.random.split(rng)
+        prev_state = state
         obs, state, reward, _done, info = env.step_env(
-            step_key, state, [actions[i] for i in range(num_agents)]
+            step_key, prev_state, [actions[i] for i in range(num_agents)]
         )
+        # Per-agent cooperative event (v2 predicate) — gives each agent's alpha.
+        events = cleanup_events_batch(prev_state, state, actions)
+        per_agent_events = per_agent_events + events.astype(jnp.int32)
         cleaned_water.append(float(jnp.ravel(info["cleaned_water"])[0]))
         collective_return += float(jnp.sum(reward))
 
+    per_agent_alpha = [float(per_agent_events[i]) / n_steps for i in range(num_agents)]
     return (
         statistics.mean(cleaned_water),
         cleaned_water[0],
         cleaned_water[-1],
         collective_return,
+        per_agent_alpha,
     )
 
 
@@ -92,12 +102,15 @@ def main() -> None:
     print(f"Trained checkpoint: {args.checkpoint}")
     print(f"  {args.episodes} episodes x {args.steps} steps, {args.num_agents} agents\n")
     means, returns = [], []
+    alpha_sums = [0.0] * args.num_agents
     for ep in range(args.episodes):
-        mean_cw, first_cw, last_cw, ret = rollout(
+        mean_cw, first_cw, last_cw, ret, per_agent_alpha = rollout(
             env, apply_fn, params, args.num_agents, args.steps, seed=ep
         )
         means.append(mean_cw)
         returns.append(ret)
+        for i in range(args.num_agents):
+            alpha_sums[i] += per_agent_alpha[i]
         print(
             f"  ep {ep}: cleaned_water mean={mean_cw:7.2f}  "
             f"(first={first_cw:.0f}, last={last_cw:.0f})  collective_return={ret:.2f}"
@@ -109,6 +122,19 @@ def main() -> None:
     )
     print(
         f"  collective_return — across episodes: mean={statistics.mean(returns):.2f}"
+    )
+
+    # Per-agent cooperation rate alpha = fraction of steps the agent did a
+    # successful clean (v2 predicate), averaged over episodes.
+    alpha = [s / args.episodes for s in alpha_sums]
+    print("\n  Per-agent cooperation rate (alpha), averaged over episodes:")
+    for i, a in enumerate(alpha):
+        bar = "#" * int(round(a * 40))
+        print(f"    agent {i}: alpha={a:.3f}  {bar}")
+    print(
+        f"  -> mean alpha={statistics.mean(alpha):.3f}, "
+        f"spread={max(alpha) - min(alpha):.3f} "
+        f"(min={min(alpha):.3f}, max={max(alpha):.3f})"
     )
     print("\n  Compare against scripts/random_rollout.py (uniform-random control).")
 
