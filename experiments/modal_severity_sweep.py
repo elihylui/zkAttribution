@@ -31,7 +31,7 @@ working baseline apart from a failing one — before committing to the sweep.
 
 --- Retrieve + inspect results locally ---
     modal volume get zkattr-severity-sweep / ./sweep_results
-    uv run python scripts/parse_wandb_run.py ./sweep_results/<cell>_seed<n>/wandb/offline-run-*
+    uv run python scripts/parse_wandb_run.py ./sweep_results/<cell>_t<timesteps>_seed<n>/wandb/offline-run-*
     # Compare `cleaned_water` across cells — look for one that stays low.
 
 NOTE: run `modal run` from the repo root — the image build reads
@@ -111,7 +111,10 @@ def run_cell(cell_id: str, cell_kwargs: dict, seed: int, total_timesteps: int) -
     import shutil
     import subprocess
 
-    run_dir = f"/results/{cell_id}_seed{seed}"
+    # The timestep budget is part of the dir name so the same cell run at
+    # different scales (e.g. a 1e7 calibration vs a 3e7 sweep) never collides
+    # or falsely skips via the RUN_COMPLETE sentinel.
+    run_dir = f"/results/{cell_id}_t{total_timesteps}_seed{seed}"
     done_marker = os.path.join(run_dir, "RUN_COMPLETE")
 
     # Idempotent skip — ONLY if a *completed* run exists. The sentinel is
