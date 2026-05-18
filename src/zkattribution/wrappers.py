@@ -27,6 +27,10 @@ The wrapper follows SocialJax's `JaxMARLWrapper` pattern: it delegates unknown
 attribute access to the inner env via `__getattr__`, overrides `reset` and
 `step`, and overrides `observation_space` to report the augmented shape.
 
+`RewardExchangeWrapper` (Track B) is a separate, stateless wrapper that does
+NOT augment observations — it remaps the per-agent reward vector via the
+Willis self-interest exchange. See `docs/gate_check_findings.md`.
+
 See `docs/stage3_design.md` for design rationale.
 """
 
@@ -383,4 +387,102 @@ class SelfReportWrapper:
         """Delegate to inner env's render, unwrapping SelfReportState if needed."""
         if isinstance(state, SelfReportState):
             return self._env.render(state.env_state)
+        return self._env.render(state)
+
+
+# ---------------------------------------------------------------------------
+# Track B: RewardExchangeWrapper — the Willis "self-interest level" knob.
+# ---------------------------------------------------------------------------
+
+
+def reward_exchange(reward: jnp.ndarray, s: float, num_agents: int) -> jnp.ndarray:
+    """Apply the Willis reward-exchange map to a per-agent reward vector.
+
+    Each agent keeps a fraction ``s`` of its own reward; the ``(1 - s)`` it
+    gives up is split equally among the other ``n - 1`` agents::
+
+        R'_i = s * r_i + (1 - s) * mean_{j != i} r_j
+
+    ``s`` is the *self-interest level*:
+
+    - ``s = 1``   — fully self-interested; the map is the identity (this is
+      SocialJax's individual-rewards mode, ``shared_rewards=False``).
+    - ``s = 1/n`` — fully utilitarian; every agent receives the mean reward
+      ``(1/n) * sum_j r_j``.
+
+    The map is **total-conserving**: ``sum_i R'_i == sum_i r_i`` for every
+    ``s``. It redistributes reward; it never creates or destroys it.
+
+    NB: SocialJax's built-in ``shared_rewards=True`` hands each agent the
+    *sum* of all rewards; the ``s = 1/n`` point here gives the *mean*
+    (``sum / n``). They differ only by the constant factor ``n`` — a reward
+    scaling, not a change in incentive structure. Wrap an env created with
+    ``shared_rewards=False`` so this map sees raw per-agent rewards.
+
+    Args:
+        reward: per-agent reward, shape ``(..., num_agents)``.
+        s: self-interest level; meaningful range ``[1/num_agents, 1]``.
+        num_agents: number of agents (static Python int).
+
+    Returns:
+        Exchanged reward, same shape as ``reward``, float32.
+    """
+    reward = jnp.asarray(reward, dtype=jnp.float32)
+    denom = max(num_agents - 1, 1)
+    total = jnp.sum(reward, axis=-1, keepdims=True)
+    others_mean = (total - reward) / denom
+    return s * reward + (1.0 - s) * others_mean
+
+
+class RewardExchangeWrapper:
+    """Remap per-agent rewards via the Willis self-interest exchange.
+
+    A *stateless* wrapper: it passes the inner env's state through untouched
+    and only post-processes the reward vector returned by ``step`` (via
+    `reward_exchange`); ``reset`` is a pure delegate. Unlike `AttributionWrapper`
+    / `SelfReportWrapper` it does NOT augment observations — observation space,
+    action space, and env state are all unchanged.
+
+    This is the Track-B "self-interest level" mechanism (see
+    ``docs/gate_check_findings.md``): it turns SocialJax's binary
+    ``shared_rewards`` flag into a continuous knob ``s``.
+
+    Usage:
+
+    - Create the inner env with ``shared_rewards=False`` so this wrapper sees
+      raw per-agent rewards (otherwise the exchange is applied on top of
+      already-shared rewards).
+    - Place this wrapper **outermost** in the env stack — around `LogWrapper` —
+      so episode-return logging records the true task reward, while the
+      *exchanged* reward is what feeds the policy-gradient update.
+
+    ``s = 1`` makes ``step`` an exact reward passthrough; ``s = 1/n`` makes
+    every agent receive the mean reward.
+    """
+
+    def __init__(self, env, s: float = 1.0):
+        if not 0.0 < s <= 1.0:
+            raise ValueError(
+                f"s (self-interest level) must be in (0, 1]; got {s}"
+            )
+        self._env = env
+        self._s = float(s)
+
+    def __getattr__(self, name: str):
+        # Delegate unknown attrs to the inner env (JaxMARLWrapper pattern).
+        return getattr(self._env, name)
+
+    @partial(jax.jit, static_argnums=0)
+    def reset(self, key):
+        # Stateless — the wrapper carries no state of its own.
+        return self._env.reset(key)
+
+    @partial(jax.jit, static_argnums=0)
+    def step(self, key, state, action):
+        obs, state_next, reward, done, info = self._env.step(key, state, action)
+        reward_exchanged = reward_exchange(reward, self._s, self._env.num_agents)
+        return obs, state_next, reward_exchanged, done, info
+
+    def render(self, state):
+        """Delegate to the inner env's render (state is the inner env's)."""
         return self._env.render(state)
