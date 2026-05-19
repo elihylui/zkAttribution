@@ -74,7 +74,7 @@ volume = modal.Volume.from_name("zkattr-gate-check", create_if_missing=True)
 
 _SCRIPTS = {
     "no_attribution": "/repo/external/SocialJax/algorithms/MAPPO/mappo_cnn_cleanup.py",
-    "oracle": "/repo/experiments/train_mappo_oracle_attribution.py",
+    "oracle": "/repo/experiments/train_mappo_attribution.py",
     "self_reported": "/repo/experiments/train_mappo_self_reported.py",
 }
 

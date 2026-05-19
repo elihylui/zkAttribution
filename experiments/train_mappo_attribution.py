@@ -1,15 +1,21 @@
-"""MAPPO training on SocialJax Cleanup with oracle attribution.
+"""MAPPO training on SocialJax Cleanup — no-attribution and oracle regimes.
 
-Copy of `external/SocialJax/algorithms/MAPPO/mappo_cnn_cleanup.py` with three
-changes:
-  1. `AttributionWrapper` inserted between `socialjax.make` and
-     `MAPPOWorldStateWrapper`, so each agent's observation is augmented with
-     the per-peer cooperation rate α (oracle — computed directly from global
-     state, no crypto).
-  2. Hydra `config_path` points to SocialJax's MAPPO config dir.
-  3. Imports for our wrapper and JAX-native predicate.
+Copy of `external/SocialJax/algorithms/MAPPO/mappo_cnn_cleanup.py` with:
+  1. `AttributionWrapper` inserted after `socialjax.make` *when*
+     `ATTRIBUTION=true` — augments each agent's observation with the per-peer
+     cooperation rate α (oracle: computed from global state, no crypto).
+     `ATTRIBUTION=false` is the no-attribution baseline (vanilla env stack).
+  2. `RewardExchangeWrapper` (always, outermost) — the Willis self-interest
+     knob. `S=1.0` is individual rewards (identity); `S=1/num_agents` is
+     fully utilitarian. Dilemma severity for the s-sweep is set via `S`.
+  3. Hydra `config_path` points to SocialJax's MAPPO config dir.
+  4. Imports for our wrappers and JAX-native predicate.
 
-Implements Stage 3 of the brief — the "trusted oracle baseline" regime.
+Config knobs (hydra add-key, e.g. `+ATTRIBUTION=false +S=0.7`):
+  ATTRIBUTION  bool, default true   — insert the oracle AttributionWrapper
+  S            float, default 1.0  — self-interest level (RewardExchangeWrapper)
+
+Stage 3 of the brief: the no-attribution baseline vs the trusted-oracle regime.
 """
 
 import os
@@ -37,7 +43,7 @@ from omegaconf import OmegaConf
 import wandb
 
 from zkattribution.predicate import cleanup_events_batch
-from zkattribution.wrappers import AttributionWrapper
+from zkattribution.wrappers import AttributionWrapper, RewardExchangeWrapper
 import copy
 import pickle
 import os
@@ -180,15 +186,24 @@ def make_train(config):
     )
     config["CLIP_EPS"] = config["CLIP_EPS"] / env.num_agents if config["SCALE_CLIP_EPS"] else config["CLIP_EPS"]
 
-    # Oracle-attribution: augment each agent's obs with per-peer alpha.
-    env = AttributionWrapper(
-        env,
-        cleanup_events_batch,
-        window_size=int(config.get("ALPHA_WINDOW_SIZE", 100)),
-    )
+    # ATTRIBUTION=true (oracle): augment each agent's obs with the per-peer
+    # cooperation rate alpha. ATTRIBUTION=false: no-attribution baseline —
+    # env stack identical to vanilla MAPPO.
+    if config.get("ATTRIBUTION", True):
+        env = AttributionWrapper(
+            env,
+            cleanup_events_batch,
+            window_size=int(config.get("ALPHA_WINDOW_SIZE", 100)),
+        )
 
     env = MAPPOWorldStateWrapper(env)
     env = LogWrapper(env)
+
+    # S = Willis self-interest level. RewardExchangeWrapper is placed outermost
+    # so LogWrapper still logs the true task return, while the exchanged reward
+    # is what feeds the policy-gradient update. S=1.0 -> identity (individual
+    # rewards); S=1/num_agents -> fully utilitarian.
+    env = RewardExchangeWrapper(env, s=float(config.get("S", 1.0)))
 
     def linear_schedule(count):
         frac = (
@@ -570,22 +585,25 @@ def single_run(config):
     out = jax.vmap(train_jit)(rngs)
 
     print("** Saving Results **")
-    # Regime-prefixed so it never collides with the no-attribution baseline's
-    # checkpoint (which the SocialJax script writes to the un-prefixed name).
-    filename = f'oracle_attribution_{config["ENV_NAME"]}_seed{config["SEED"]}_reward_{config["REWARD"]}'
+    # Regime- and S-tagged so checkpoints from different sweep runs never collide.
+    regime = "oracle" if config.get("ATTRIBUTION", True) else "no_attribution"
+    filename = f'{regime}_{config["ENV_NAME"]}_seed{config["SEED"]}_s{config.get("S", 1.0)}_reward_{config["REWARD"]}'
     train_state = jax.tree_map(lambda x: x[0], out["runner_state"][0][0][0])
     save_path = f"./checkpoints/{filename}.pkl"
     save_params(train_state, save_path)
     params = load_params(save_path)
     print("** Evaluating Results **")
-    # Eval env must mirror the training env's wrapping or the trained policy
-    # (which expects augmented obs channels) will mismatch.
+    # Eval env must mirror the training env's obs wrapping or the trained
+    # policy (which expects augmented obs channels) will mismatch. The reward
+    # exchange (S) only reshapes the training signal, so eval needs no
+    # RewardExchangeWrapper.
     eval_env = socialjax.make(config["ENV_NAME"], **config["ENV_KWARGS"])
-    eval_env = AttributionWrapper(
-        eval_env,
-        cleanup_events_batch,
-        window_size=int(config.get("ALPHA_WINDOW_SIZE", 100)),
-    )
+    if config.get("ATTRIBUTION", True):
+        eval_env = AttributionWrapper(
+            eval_env,
+            cleanup_events_batch,
+            window_size=int(config.get("ALPHA_WINDOW_SIZE", 100)),
+        )
     evaluate(params, eval_env, save_path, config)
     # state_seq = get_rollout(train_state.params, config)
     # viz = OvercookedVisualizer()
@@ -614,7 +632,8 @@ def evaluate(params, env, save_path, config):
     pics = []
     img = env.render(state)
     pics.append(img)
-    root_dir = f"evaluation/oracle_attribution_cleanup"
+    regime = "oracle" if config.get("ATTRIBUTION", True) else "no_attribution"
+    root_dir = f"evaluation/{regime}_cleanup"
     path = Path(root_dir + "/state_pics")
     path.mkdir(parents=True, exist_ok=True)
 
