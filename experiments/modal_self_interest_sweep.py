@@ -1,25 +1,31 @@
 """Modal orchestration for the self-interest (S) sweep on the hardened env.
 
 The Track-A severity sweep found dirt0.7 — a Cleanup regime where the
-no-attribution baseline fails at maximum self-interest (S=1). This sweep dials
-S, the Willis self-interest level (`RewardExchangeWrapper`), on that fixed env.
+no-attribution baseline fails at maximum self-interest (S=1). This script
+dials S, the Willis self-interest level (`RewardExchangeWrapper`), on that
+fixed env, for the no-attribution and oracle regimes.
 
-Phase 1 (the s-sweep): no-attribution baseline, dirt0.7, S below 1.0. Maps the
-cooperation cliff S* and confirms dirt0.7 is a genuine dilemma — does the
-baseline cooperate at low S (heavy reward-sharing)? If even S=1/7 fails,
-dirt0.7 is physically impossible rather than a social dilemma.
+The goal is to compare cooperation *cliffs*: the S below which each regime
+recovers cooperation. If oracle attribution shifts its cliff to a higher S
+than no-attribution's, verified attribution lets the system tolerate more
+self-interest — that is the Stage-3 result.
 
-Phase 2 (Stage 3): no-attribution vs oracle attribution at chosen severity
-points (S-values picked from Phase 1's curve), 2 seeds — the Stage-3 gate.
+Modes:
+  phase1        no-attribution s-sweep, 1 seed — the no-attribution curve and
+                its cliff S*. (Done 2026-05-19; kept for reproducibility.)
+  oracle_scout  oracle s-sweep on the SAME S-grid, 1 seed — overlay on the
+                phase1 curve to see whether oracle shifts the cliff.
+  confirm       both regimes, CONFIRM_S_VALUES, N seeds — the multi-seed
+                Stage-3 verdict, run once the scouts have located the cliffs.
 
 Runs at 3e7 timesteps (proven sufficient by the Track-A sweep). Individual base
 rewards (shared_rewards=False); RewardExchangeWrapper then applies S.
 
---- Phase 1: no-attribution s-sweep (6 runs, ~$9) ---
-    modal run experiments/modal_self_interest_sweep.py --mode phase1
+--- oracle_scout: oracle s-sweep (6 runs, ~$9) ---
+    modal run experiments/modal_self_interest_sweep.py --mode oracle_scout
 
---- Phase 2: Stage-3 grid (fill PHASE2_S_VALUES from Phase 1's result first) ---
-    modal run experiments/modal_self_interest_sweep.py --mode phase2 --seeds 2
+--- confirm: Stage-3 grid (fill CONFIRM_S_VALUES from the scouts first) ---
+    modal run experiments/modal_self_interest_sweep.py --mode confirm --seeds 5
 
 --- Retrieve results (per run dir) ---
     cd <some dir> && modal volume get zkattr-self-interest-sweep /<run_dir>
@@ -69,14 +75,16 @@ _TRAIN_SCRIPT = "/repo/experiments/train_mappo_attribution.py"
 # no-attribution baseline fails at S=1.
 DIRT_SPAWN = 0.7
 
-# Phase 1 — no-attribution baseline, S swept below 1.0. (S=1.0 is already known
-# to fail, from the Track-A sweep, so it is not re-run here.) 1/7 ~= 0.14 is the
+# The scout S-grid — used by both `phase1` (no-attribution) and `oracle_scout`
+# (oracle), so the two cooperation curves overlay directly. S=1.0 is already
+# known to fail (Track-A sweep), so it is not re-run; 1/7 ~= 0.14 is the
 # fully-utilitarian floor of the Willis range.
-PHASE1_S_VALUES = [0.85, 0.7, 0.55, 0.4, 0.28, 0.14]
+SCOUT_S_VALUES = [0.85, 0.7, 0.55, 0.4, 0.28, 0.14]
 
-# Phase 2 — the Stage-3 severity points, chosen from Phase 1's cliff. Fill this
-# in (e.g. [0.85, 0.5, 0.2]) after Phase 1, then run --mode phase2.
-PHASE2_S_VALUES = []  # list of floats
+# The `confirm` (Stage-3) severity points — chosen from the scout curves to
+# bracket both cliffs. Fill this in (e.g. [0.85, 0.55, 0.40, 0.28, 0.14])
+# after the scouts, then run --mode confirm.
+CONFIRM_S_VALUES = []  # list of floats
 
 # regime -> the ATTRIBUTION flag passed to the training script.
 _ATTRIBUTION = {"no_attribution": "false", "oracle": "true"}
@@ -156,46 +164,58 @@ def _print_run(result: dict) -> None:
     print(f"  {result['regime']} S={result['s']} seed{result['seed']} -> {status}")
 
 
+def _scout(regime: str, total_timesteps: int) -> None:
+    """Run a 1-seed s-sweep of `regime` across SCOUT_S_VALUES."""
+    jobs = [(regime, s, 0, total_timesteps) for s in SCOUT_S_VALUES]
+    print(
+        f"{regime} s-sweep scout on dirt{DIRT_SPAWN}: {len(jobs)} runs "
+        f"(S = {SCOUT_S_VALUES}) at {total_timesteps:,} timesteps...\n"
+    )
+    results = list(run_cell.starmap(jobs))
+    for result in results:
+        _print_run(result)
+    measured = [r["minutes"] for r in results if not r.get("skipped")]
+    if measured:
+        avg = sum(measured) / len(measured)
+        print(
+            f"\n  per-run ~{avg:.1f} min  "
+            f"(~${(avg / 60.0) * _GPU_USD_PER_HR:.2f} on an A100)"
+        )
+    print(
+        "\n  Retrieve + parse each run; the cooperation cliff is the S where "
+        "cleaned_water / return recovers."
+    )
+
+
 @app.local_entrypoint()
-def main(mode: str = "phase1", seeds: int = 2, total_timesteps: int = 30_000_000):
+def main(mode: str = "oracle_scout", seeds: int = 2, total_timesteps: int = 30_000_000):
     if mode == "phase1":
-        jobs = [("no_attribution", s, 0, total_timesteps) for s in PHASE1_S_VALUES]
-        print(
-            f"Phase 1 — no-attribution s-sweep on dirt{DIRT_SPAWN}: {len(jobs)} runs "
-            f"(S = {PHASE1_S_VALUES}) at {total_timesteps:,} timesteps...\n"
-        )
-        results = list(run_cell.starmap(jobs))
-        for result in results:
-            _print_run(result)
-        measured = [r["minutes"] for r in results if not r.get("skipped")]
-        if measured:
-            avg = sum(measured) / len(measured)
-            print(
-                f"\n  per-run ~{avg:.1f} min  "
-                f"(~${(avg / 60.0) * _GPU_USD_PER_HR:.2f} on an A100)"
-            )
-        print(
-            "\n  Retrieve + parse each run, then find the S where cleaned_water / "
-            "return recovers — that brackets the cooperation cliff S*."
-        )
+        # No-attribution scout — done 2026-05-19; kept for reproducibility.
+        _scout("no_attribution", total_timesteps)
         return
 
-    if mode == "phase2":
-        if not PHASE2_S_VALUES:
+    if mode == "oracle_scout":
+        # Step 1: the oracle s-sweep, same grid as phase1 for a direct overlay.
+        _scout("oracle", total_timesteps)
+        return
+
+    if mode == "confirm":
+        # Step 2: the multi-seed Stage-3 grid at the chosen severity points.
+        if not CONFIRM_S_VALUES:
             raise ValueError(
-                "PHASE2_S_VALUES is empty — fill it with the severity points "
-                "chosen from Phase 1's result, then re-run."
+                "CONFIRM_S_VALUES is empty — fill it with the S-points "
+                "bracketing the two cliffs (from the scouts), then re-run."
             )
         regimes = ["no_attribution", "oracle"]
         jobs = [
             (regime, s, seed, total_timesteps)
             for regime in regimes
-            for s in PHASE2_S_VALUES
+            for s in CONFIRM_S_VALUES
             for seed in range(seeds)
         ]
         print(
-            f"Phase 2 — Stage-3 grid on dirt{DIRT_SPAWN}: {len(jobs)} runs "
-            f"({len(regimes)} regimes x {len(PHASE2_S_VALUES)} S-values x {seeds} "
+            f"confirm — Stage-3 grid on dirt{DIRT_SPAWN}: {len(jobs)} runs "
+            f"({len(regimes)} regimes x {len(CONFIRM_S_VALUES)} S-values x {seeds} "
             f"seeds) at {total_timesteps:,} timesteps...\n"
         )
         for result in run_cell.starmap(jobs):
@@ -203,4 +223,6 @@ def main(mode: str = "phase1", seeds: int = 2, total_timesteps: int = 30_000_000
         print("\n  Retrieve:  modal volume get zkattr-self-interest-sweep /<run_dir>")
         return
 
-    raise ValueError(f"unknown mode {mode!r} (expected 'phase1' or 'phase2')")
+    raise ValueError(
+        f"unknown mode {mode!r} (expected 'phase1', 'oracle_scout', or 'confirm')"
+    )
