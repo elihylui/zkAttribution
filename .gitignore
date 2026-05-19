@@ -45,6 +45,8 @@ checkpoints/
 logs/
 outputs/
 results/
+# Retrieved Modal-volume run data (sweep_results/, s_sweep_results/, ...):
+*_results/
 # SocialJax MAPPO scripts write eval GIFs here:
 evaluation/
 
