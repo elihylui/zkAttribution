@@ -98,19 +98,67 @@ an external check that `dirt0.7` sits at a credible dilemma severity.
 
 Caveat: 1 seed, so the cliff is *bracketed* to `(0.14, 0.28)`, not pinned.
 
+## The oracle scout — the Stage-3 signal
+
+The same s-sweep, now for the **oracle** regime — oracle attribution on
+`dirt0.7`, the same 6-value S-grid, 1 seed, 3e7 — so the oracle cooperation
+curve overlays the Phase 1 no-attribution curve directly. Final episode return:
+
+| S | no-attribution | oracle |
+|---|---|---|
+| 0.85 | fail · r≈0 | fail · r≈4 |
+| 0.70 | fail · r≈1 | fail · r≈5 |
+| 0.55 | fail · r≈0 | **coop · r≈1298** |
+| 0.40 | fail · r≈0 | fail · r≈2 |
+| 0.28 | fail · r≈1 | **coop · r≈1402** |
+| 0.14 | coop · r≈1044 | coop · r≈857 |
+
+### Read 1 — oracle attribution helps
+
+Oracle cooperates strongly at **S=0.55 and S=0.28** — return ~1300–1400, river
+cleaned — two severities where no-attribution categorically failed. Across the
+whole failing region [0.28, 0.85], no-attribution cooperated 0/5; oracle
+cooperated 2/5, and hard. Attribution demonstrably opens cooperation where the
+baseline has none. Unlike the gate-check (oracle ≈ no-attribution on default
+Cleanup), this is a real difference — the **Stage-3 gate passes**.
+
+### Read 2 — the outcome is bimodal
+
+The oracle curve is non-monotonic: cooperate at 0.55, fail at 0.40, cooperate
+at 0.28. `S=0.40` is *less* selfish than `S=0.55`, so this is not a cliff — it
+is **bimodality**. Under oracle attribution the mid-S region has two basins, a
+cooperative one and a collapsed one, and which one a run reaches is
+seed-dependent. The takeoffs are genuine (return climbs cleanly past 1300, not
+noise) and the collapses are genuine (~0); 1 seed per S is one draw per S, so
+the jagged pattern is the bimodality signature, not a bug.
+
+Consequence: the multi-seed confirmation must **estimate P(cooperate | S)** for
+each regime — the mid-S outcome is a coin-flip, so ≥5 seeds per cell are needed
+to estimate a probability rather than denoise a point estimate.
+
+### Caveat — the S=0.14 control
+
+Both regimes cooperate at `S=0.14`, but oracle (r≈857) came in below
+no-attribution (r≈1044) — likely 1-seed variance plus oracle's run still
+climbing at 30M (not converged). The confirmation should check oracle is not
+paying a real cost where the baseline already cooperates.
+
 ## Status & next
 
-Stage 3 is now a real question: a failing no-attribution baseline (`dirt0.7`,
-`S ≥ 0.28`) with genuine headroom for an attribution signal to help.
+The Stage-3 gate has passed qualitatively: oracle attribution produces
+cooperation where the no-attribution baseline cannot. What remains is to
+quantify it.
 
-- **Phase 2 — the Stage-3 grid:** no-attribution vs **oracle** attribution,
-  2 seeds, at ~3 `S`-points in the failing region (e.g. `{0.55, 0.40, 0.28}`).
-  Run via `modal_self_interest_sweep.py --mode phase2`.
-- **Phase 2's result is the Stage-3 verdict** — does oracle (trusted,
-  verified-by-construction) attribution improve cooperation over
-  no-attribution. If yes, the cryptographic layer (Stage 5) is motivated; if
-  not, the H1 premise needs a rethink before any crypto.
+- **The confirmation (`confirm` mode):** both regimes, 5 seeds, at
+  `S ∈ {0.70, 0.55, 0.40, 0.28, 0.14}`, 3e7. Output: P(cooperate) vs S for each
+  regime — the Stage-3 figure, with the bimodality characterised rather than
+  hidden.
+- **The confirmation is the Stage-3 verdict.** If oracle's P(cooperate) curve
+  sits clearly above no-attribution's, the cryptographic layer (Stage 5) is
+  motivated.
+- **Then Stage 4** — the two-phase lying experiment (pretrain under oracle to
+  establish reciprocity, then fork a self-reported continuation so the claim
+  head has a payoff-relevant gradient), forking off the confirmation's oracle
+  checkpoints.
 
-Out of scope here: the self-reported regime (Stage 4 — has an unresolved
-design issue, the claim head lacking a learning signal) and the cryptographic
-layer (Stages 5–7).
+Out of scope here: the cryptographic layer (Stages 5–7).
