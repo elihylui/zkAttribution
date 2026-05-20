@@ -81,10 +81,12 @@ DIRT_SPAWN = 0.7
 # fully-utilitarian floor of the Willis range.
 SCOUT_S_VALUES = [0.85, 0.7, 0.55, 0.4, 0.28, 0.14]
 
-# The `confirm` (Stage-3) severity points — chosen from the scout curves to
-# bracket both cliffs. Fill this in (e.g. [0.85, 0.55, 0.40, 0.28, 0.14])
-# after the scouts, then run --mode confirm.
-CONFIRM_S_VALUES = []  # list of floats
+# The `confirm` (Stage-3) severity points — anchored to Phase 1's S-grid so
+# the confirm curves overlay the scout curves directly. 0.70 = the upper-fail
+# anchor (both regimes failed there in the scouts); 0.55 / 0.40 / 0.28 = the
+# bimodal mid-S zone the oracle scout flagged (oracle cooperated at 0.55 and
+# 0.28 but collapsed at 0.40 — needs seeds); 0.14 = the cooperating control.
+CONFIRM_S_VALUES = [0.70, 0.55, 0.40, 0.28, 0.14]
 
 # regime -> the ATTRIBUTION flag passed to the training script.
 _ATTRIBUTION = {"no_attribution": "false", "oracle": "true"}
