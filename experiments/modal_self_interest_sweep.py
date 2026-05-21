@@ -81,12 +81,14 @@ DIRT_SPAWN = 0.7
 # fully-utilitarian floor of the Willis range.
 SCOUT_S_VALUES = [0.85, 0.7, 0.55, 0.4, 0.28, 0.14]
 
-# The `confirm` (Stage-3) severity points — anchored to Phase 1's S-grid so
-# the confirm curves overlay the scout curves directly. 0.70 = the upper-fail
-# anchor (both regimes failed there in the scouts); 0.55 / 0.40 / 0.28 = the
-# bimodal mid-S zone the oracle scout flagged (oracle cooperated at 0.55 and
-# 0.28 but collapsed at 0.40 — needs seeds); 0.14 = the cooperating control.
-CONFIRM_S_VALUES = [0.70, 0.55, 0.40, 0.28, 0.14]
+# The `confirm` severity points. Currently the 1e8 CALIBRATION subset — a hard
+# cell (0.70) and a mid cell (0.40) — run first to check that (a) dirt0.7 runs
+# plateau by 1e8 and (b) there is a genuine failing baseline at that horizon.
+# The earlier 3e7 confirm was confounded: at 3e7 every run was still caught
+# mid-takeoff, so final return measured takeoff timing, not cooperation.
+# Expand to the full grid [0.70, 0.55, 0.40, 0.28, 0.14] once the calibration
+# confirms 1e8 settles the runs.
+CONFIRM_S_VALUES = [0.70, 0.40]
 
 # regime -> the ATTRIBUTION flag passed to the training script.
 _ATTRIBUTION = {"no_attribution": "false", "oracle": "true"}
