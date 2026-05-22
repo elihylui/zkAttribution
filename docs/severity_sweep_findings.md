@@ -1,5 +1,15 @@
 # Severity Sweep — Findings (2026-05-18 → 19)
 
+> **⚠ Largely superseded (2026-05-21).** A later 1e8 re-run showed the
+> experimental conclusions in this note — the dirtSpawn "cliff", the Phase-1
+> cooperation cliff `S*∈(0.14,0.28)`, the oracle scout's "attribution helps" —
+> are **3e7-horizon artifacts**: at 3e7 every dirt0.7 run was caught
+> mid-takeoff. At the proper 1e8 horizon, dirt0.7's no-attribution baseline
+> cooperates — there is no failing baseline. See `docs/premise_findings.md`.
+> Only the machinery (`RewardExchangeWrapper`, `train_mappo_attribution.py`,
+> the orchestrators) and the gate-check motivation remain accurate; the rest
+> is kept as a record of the reasoning at the time.
+
 Follows on from `gate_check_findings.md`. The gate-check was inconclusive
 because default Cleanup is too easy a dilemma; this note records how we found
 a genuinely hard one and put dilemma severity on a principled axis.
