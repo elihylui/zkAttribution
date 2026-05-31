@@ -42,6 +42,8 @@ checkpoints/
 *.ckpt
 *.pt
 *.pth
+*.pkl
+*.wandb
 logs/
 outputs/
 results/
