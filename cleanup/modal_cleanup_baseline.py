@@ -102,6 +102,7 @@ def _patch_socialjax_ippo_cleanup_attribution() -> None:
         '        env = AttributionWrapper(\n'
         '            env, predicate=cleanup_events_batch,\n'
         '            window_size=int(config.get("ATTRIBUTION_WINDOW", 50)),\n'
+        '            collapse_spread=bool(config.get("ATTRIBUTION_COLLAPSE_SPREAD", False)),\n'
         '        )\n'
     )
     if anchor not in src:
@@ -129,6 +130,7 @@ def run_cell(
     timeout_minutes: int = 0,
     attribution: bool = False,
     attribution_window: int = 50,
+    collapse_spread: bool = False,
 ) -> dict:
     """Train one IPPO Cleanup (reward_mode, seed) on a GPU; wandb-offline -> Volume."""
     import os
@@ -140,6 +142,8 @@ def run_cell(
     # Tag the run dir with attribution config so attribution arms land in
     # separate dirs from bare baselines.
     attr_tag = f"_attrV2_w{attribution_window}" if attribution else ""
+    if attribution and collapse_spread:
+        attr_tag += "_sc"  # spread-collapse arm (Tier-1 Stage-4 proxy)
     run_dir = (
         f"/results/ippo_cleanup_{reward_mode}_t{total_timesteps}"
         f"_{ps_tag}{envs_tag}{attr_tag}_seed{seed}"
@@ -183,6 +187,8 @@ def run_cell(
         # The patched make_train reads these via config.get(...).
         ippo_args.append("+ATTRIBUTION=true")
         ippo_args.append(f"+ATTRIBUTION_WINDOW={attribution_window}")
+        if collapse_spread:
+            ippo_args.append("+ATTRIBUTION_COLLAPSE_SPREAD=true")
     proc = subprocess.Popen(
         ippo_args,
         cwd=run_dir,
@@ -246,13 +252,16 @@ def main(
     reward_mode: str = "common",
     attribution: bool = False,
     attribution_window: int = 50,
+    collapse_spread: bool = False,
 ):
     ps_label = "PS=True" if parameter_sharing else "PS=False (paper config)"
     if mode == "calibration":
         if reward_mode not in _SHARED:
             raise ValueError(f"reward_mode must be one of {list(_SHARED)!r}")
         attr_label = (
-            f", attribution V2 (window {attribution_window})" if attribution else ""
+            f", attribution V2 (window {attribution_window}"
+            + (", SPREAD-COLLAPSE" if collapse_spread else "")
+            + ")" if attribution else ""
         )
         print(
             f"Calibration: 1 IPPO Cleanup run ({reward_mode} reward, seed {seed}) at "
@@ -262,7 +271,7 @@ def main(
         )
         result = run_cell.remote(
             reward_mode, seed, total_timesteps, parameter_sharing, num_envs, timeout_minutes,
-            attribution, attribution_window,
+            attribution, attribution_window, collapse_spread,
         )
         _print_run(result)
         if not result.get("skipped") and not result.get("timed_out"):

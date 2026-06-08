@@ -73,11 +73,23 @@ class AttributionWrapper:
         predicate: Callable,
         window_size: int = 100,
         predicate_uses_actions: bool = True,
+        collapse_spread: bool = False,
     ):
         self._env = env
         self._predicate = predicate
         self._window_size = window_size
         self._predicate_uses_actions = predicate_uses_actions
+        # If True, the α the policy *observes* is the grand-mean broadcast to all
+        # peers (cross-agent std -> 0) — but still honest. The per-agent true α is
+        # unchanged in state/info, so `alpha_std` logging reflects the spread the
+        # policy was DENIED. Tests whether α-spread is causally necessary.
+        self._collapse_spread = collapse_spread
+
+    def _obs_alpha(self, alpha: jnp.ndarray) -> jnp.ndarray:
+        """α as actually shown to the policy (collapsed to its mean if enabled)."""
+        if self._collapse_spread:
+            return jnp.full_like(alpha, jnp.mean(alpha))
+        return alpha
 
     def __getattr__(self, name: str):
         # Delegate unknown attrs to the inner env (JaxMARLWrapper pattern).
@@ -155,7 +167,7 @@ class AttributionWrapper:
             step_in_window=jnp.int32(0),
             current_alpha=jnp.zeros(self._env.num_agents, dtype=jnp.float32),
         )
-        return self._augment_obs(obs, state.current_alpha), state
+        return self._augment_obs(obs, self._obs_alpha(state.current_alpha)), state
 
     @partial(jax.jit, static_argnums=0)
     def step(self, key, state: AttributionState, action):
@@ -199,7 +211,7 @@ class AttributionWrapper:
             (self._env.num_agents,), jnp.std(alpha_next), dtype=jnp.float32
         )
 
-        return self._augment_obs(obs, alpha_next), state_next, reward, done, info
+        return self._augment_obs(obs, self._obs_alpha(alpha_next)), state_next, reward, done, info
 
     @staticmethod
     def _extract_done_scalar(done) -> jnp.ndarray:

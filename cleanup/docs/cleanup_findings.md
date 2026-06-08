@@ -17,7 +17,17 @@
 > the policy reads α's cross-agent structure (shuffling peers costs ~44%) but is
 > *better off with α≡0* (zero 914 > real 643) — the gap is coordination
 > degradation, not free-riding; α is a training-time scaffold the converged policy
-> over-responds to (see "α-usage ablation").
+> over-responds to (see "α-usage ablation"). **Causal test (2026-06-08):**
+> forcing α's cross-agent spread to zero (aggregate-only) plateaus *higher* than
+> the per-agent signal (858 vs 553, seed 0) — the per-agent breakdown hurts; the
+> aggregate cooperation level is the useful signal, and α-spread was correlational
+> not causal. (The ZK verification target shrinks to one scalar — the aggregate.)
+> **Stage-4 result (2026-06-08):** verified-vs-self-reported tested as a frozen-
+> partner best-response — **lying is self-defeating**: inflating the aggregate makes
+> partners coordinate worse, so a free-riding focal's *own* return more than halves
+> (954→368) and the best report is the truth (no sweet spot). So **verification
+> earns nothing *here*** — the signal is exploitation-proof by the policy's response,
+> not by crypto (see "Stage-4 result").
 
 ## TL;DR
 
@@ -319,6 +329,12 @@ It is the population-level counterpart of the Schelling co-play finding below �
 both say attribution acts on the *equilibrium the group settles into*, not on a
 portable individual strategy.
 
+**Causal update (see "Causal test" below).** This spread↔basin link is only
+*correlational*. A causal test — training with the cross-agent spread forced to
+zero — plateaus *higher*, not lower (858 vs 553). So α-spread predicts *which*
+basin a seed reaches but is **not** the causal driver; the aggregate α *level*
+is. Read this section as correlational.
+
 **Caveat — α level is confounded.** A *low* α at *high* return partly reflects
 a clean river (little dirt left for a clean-beam to hit), not low cooperation.
 So we read the cross-agent *spread* of α (an information measure), not its
@@ -376,6 +392,139 @@ info → exploitation when there are cooperators to exploit (mixed population); 
 identical agents, more info just degrades coordination.** Both fit the headline
 mechanism — **α is a training-time scaffold** (it steers the population into the
 basin; see "Mechanism") that the converged policy over-responds to at inference.
+
+## Causal test: aggregate α beats per-agent α (spread-collapse, seed 0)
+
+The "Mechanism" section is *correlational* — across two seeds, higher α-spread
+during the rise coincided with the deeper basin. To test **causality** we trained
+an arm where the α the policy observes is forced to **zero cross-agent spread**:
+the wrapper broadcasts the *grand-mean* α to all peers (still honest — the
+per-agent true α is unchanged in state/logs; the policy is just denied the
+breakdown). `AttributionWrapper(collapse_spread=True)`, wired via `--collapse-spread`,
+same seed/config as verified:
+
+```bash
+modal run --detach cleanup/modal_cleanup_baseline.py \
+  --mode calibration --reward-mode individual --seed 0 \
+  --total-timesteps 300000000 --no-parameter-sharing --num-envs 128 \
+  --timeout-minutes 0 --attribution --attribution-window 50 --collapse-spread
+```
+
+**Result — collapsing the spread *helps*:**
+
+| arm (seed 0, w=50) | α the policy sees | plateau | peak |
+|---|---|---|---|
+| individual (floor) | none (19ch) | 140 | — |
+| **verified** | full **per-agent** vector (26ch) | **553** | 766 |
+| **spread-collapse** | **aggregate** (mean) only (26ch) | **858** | 989 |
+| common (ceiling) | — (shared reward) | 1463 | — |
+
+![Cleanup attribution overview](../sweep_results/attr_w50_partial/cleanup_attr_overview.png)
+
+- **α-spread is *not* causally necessary.** Forcing spread → 0 didn't push toward
+  the floor; it plateaued **higher** than verified (858 vs 553, same seed; the true
+  α-spread was still ~0.054, just hidden from the policy).
+- **Aggregate α beats per-agent α.** The clean 26ch-vs-26ch comparison (verified
+  553 vs spread-collapse 858) isolates per-agent-vs-aggregate: the **per-agent
+  breakdown is net harmful** (~−305). The useful signal is the *aggregate
+  cooperation level* ("is the group cleaning?"), not *who*.
+- **Agrees with the α-usage ablation** ("less α information is better"): per-agent
+  detail induces herding / miscoordination (more but futile cleaning, dirtier
+  river) at inference *and* now in training.
+- **Reframes the mechanism:** α-spread was a *correlate* of which basin a seed
+  reached, not the causal driver — the aggregate *level* drives the lift. **n=1
+  seed; seed-1 spread-collapse confirmation pending** before this is firm.
+
+### What this means for ZK / Stage-4 (reframed around the aggregate)
+
+Tier-1 didn't touch verification — both arms fed **oracle** α; the only variable
+was per-agent vs aggregate. So aggregate-being-better does **not** weaken the ZK
+case:
+
+- The aggregate is `mean(αᵢ)`, so if agents **self-report** their αᵢ, it becomes
+  `mean(claimedᵢ)` — any agent inflating its claim **inflates the aggregate**. A
+  self-reported aggregate is just as gameable (claim you're cleaning so peers keep
+  cleaning while you free-ride).
+- What changes is the **verification target**: prove **one scalar** (the true
+  aggregate cooperation count over the window) instead of a 7-element vector — a
+  *simpler, cheaper* ZK circuit. Good for the ZK story, not bad.
+
+**Stage-4, reframed:** verified-aggregate vs **self-reported**-aggregate — does
+letting agents inflate the aggregate corrupt cooperation? Open empirically: if
+everyone learns to always claim max, the aggregate degenerates to an uninformative
+constant, and whether that collapses the lift is exactly the test. (Implementation
+gap unchanged: claim head + joint-action PPO + `SelfReportWrapper` wiring; see
+`docs/stage4_design.md`.)
+
+## Stage-4 result: self-report exploitation — lying is self-defeating (design A)
+
+We ran the verified-aggregate-vs-self-reported test as a **best-response**
+(`cleanup/train_selfreport_exploit.py`): 6 **frozen** aggregate-policy ("858")
+partners conditioning on the aggregate α, plus 1 trainable **focal** with an
+env-action head and a **claim** head (11-bucket Categorical, `stop_gradient` on
+the trunk — the documented 2026-05-18 two-head fix). The focal's claim **replaces
+its own contribution to the aggregate** the partners see, so inflating corrupts
+the signal. Reward is unchanged (own apples); lying can only pay through the
+partners' reaction → the commons → the focal's apples. Single-agent PPO, focal
+warm-started from the 858 checkpoint, partners frozen; `--honest` flips the
+focal's contribution back to its true α (verified control):
+
+```bash
+modal run cleanup/modal_selfreport_exploit.py --total-timesteps 100000000
+```
+
+**Result (1e8, seed 0) — lying *more than halves* the liar's own return:**
+
+| | honest control | lying |
+|---|---|---|
+| focal return | **954** | **368** |
+| river dirt | 59 (clean) | 85 (dirtier) |
+| aggregate partners see | 0.037 | 0.091 (inflated) |
+| focal claimed α | (unused) | **~0.45, flat — never learns to inflate** |
+| focal true α | 0 (free-rides) | 0 (free-rides) |
+
+Injecting the focal's claim inflates the aggregate (0.037→0.091); the partners
+respond to the higher signal by coordinating *worse* (the "less α is better /
+more-α→herding" property from the ablation & causal test), the river degrades
+(59→85), and the free-riding focal's own apples **fall 954→368**. You cannot
+free-ride on a commons you just poisoned.
+
+**Sweet-spot check (eval `--sweep-claim`) — no profitable lie at any level.**
+Fixing the focal's claim to each value 0.0→1.0 (env-policy held fixed) gives a
+**monotone-decreasing** focal-return curve: best report is the truth (claim 0 →
+968); even a *small* lie costs ~15% (claim 0.1 → 824); past ~0.55 the commons
+collapses (dirt ~doubles, return floors ~80).
+
+![Self-report exploitation result](../selfreport/selfreport_exploit.png)
+
+**Two findings:**
+1. **Lying is self-defeating** at every inflation level → a free-riding agent's
+   strictly-best report (in the over-report direction) is the *truth*. No
+   incentive to inflate exists.
+2. **The claim head never learned to lie** (claimed α flat ~0.45) — consistent
+   with (1): there is no gradient toward inflation.
+
+**ZK implication (honest, partly negative for the thesis).** In this env +
+attribution design, **verification earns nothing — not because agents are honest,
+but because gaming the signal backfires on the gamer.** The signal is
+exploitation-proof by virtue of *how the policy responds to it*, not by crypto.
+The naive ZK motivation ("unverified attribution gets gamed") does **not** hold
+here.
+
+**Caveats.**
+- **issue-2 confound.** The claim head didn't learn (diffuse claim→reward credit
+  assignment, the documented Stage-4 blocker), so "agents won't *learn* to lie" is
+  confounded with "can't learn the claim." But the **"lying doesn't pay"** result
+  is clean — it's the forced honest-vs-corrupted comparison *and* the claim sweep,
+  independent of whether the claim trained.
+- **Downstream of "less α is better"** (n=1 seed, this Cleanup design). A
+  **reciprocator** population — responding to *high* perceived cooperation by
+  *sustaining* the commons — would make inflation pay, and *there* ZK would matter.
+  So this is "verification unnecessary **here**," not "ever."
+- **Over-report direction only.** A focal that genuinely cooperated (true α>0)
+  might profit by **under**-reporting (claim < true) to keep the aggregate low and
+  the commons rich — a lie ZK *could* catch. Untested; our free-rider focal has
+  nothing to gain in either direction.
 
 ## Window sweep (w ∈ {25, 50, 100}, seed 0) — w=50 is a sharp optimum
 
@@ -551,6 +700,18 @@ tit-for-tat.
 - α-usage ablation: `scripts/ablate_alpha_cleanup.py` (6 α controls — real / zero /
   random×2 / permute-peers×2 — plus clean-action rate & dirt, on the w=50 seed0
   all-attr population; console table, no figure).
+- Causal test (aggregate vs per-agent α): `AttributionWrapper(collapse_spread=True)`
+  + `--collapse-spread` orchestrator flag. Overview figure:
+  `scripts/plot_cleanup_attr_overview.py` →
+  `cleanup/sweep_results/attr_w50_partial/cleanup_attr_overview.png`. Run dir on the
+  volume: `ippo_cleanup_individual_t300000000_ps0_e128_attrV2_w50_sc_seed0`.
+- Stage-4 self-report exploitation (design A): `cleanup/train_selfreport_exploit.py`
+  (`FrozenPartnerExploitWrapper` + focal claim head + single-agent PPO + warm-start
+  + `--sweep-claim` eval), `cleanup/modal_selfreport_exploit.py` (launcher),
+  `scripts/plot_selfreport_exploit.py` → `cleanup/selfreport/selfreport_exploit.png`.
+  CSVs: `cleanup/selfreport/exploit_{lying,honest}_seed0.csv`. Partners/focal =
+  the w50_sc_seed0 checkpoints (`cleanup/selfreport/partners_sc_seed0/`, gitignored
+  pkls). Design spec: `docs/stage4_design.md`.
 - Schelling diagrams: `scripts/run_schelling_cleanup.py` (classic),
   `scripts/run_schelling_cleanup_attr.py` (3-curve attribution),
   `scripts/plot_schelling_diagram.py` (renderer). Outputs in
