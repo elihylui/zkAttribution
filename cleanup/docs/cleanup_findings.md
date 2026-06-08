@@ -1,6 +1,6 @@
 # Cleanup — IPPO Baseline + Attribution Design
 
-> **Status (2026-05-29):** Cleanup IPPO baselines reproduced (common ≫
+> **Status (2026-06-01):** Cleanup IPPO baselines reproduced (common ≫
 > individual, 10.5× gap). Observation-layer attribution (per-peer α
 > injection via `AttributionWrapper`, individual reward untouched) **lifts
 > the floor: 2 seeds plateau at ~358 and ~553 vs the individual floor of
@@ -11,7 +11,13 @@
 > (see "Mechanism"); but Schelling co-play diagrams show the lift is a
 > **population-equilibrium** effect — a *lone* attribution agent dropped
 > among fixed strangers free-rides rather than reciprocating (see "Schelling
-> diagrams").
+> diagrams"). **Window sweep (2026-06-01):** holding seed 0 fixed, **w=50 is
+> a sharp optimum** — both w=25 and w=100 collapse at ~1e8 and end at the
+> floor (see "Window sweep"); seed-1 confirmation pending. **α-usage ablation:**
+> the policy reads α's cross-agent structure (shuffling peers costs ~44%) but is
+> *better off with α≡0* (zero 914 > real 643) — the gap is coordination
+> degradation, not free-riding; α is a training-time scaffold the converged policy
+> over-responds to (see "α-usage ablation").
 
 ## TL;DR
 
@@ -266,15 +272,17 @@ reward-layer Predicate A wasn't.
 **Caveats / next steps.**
 
 - Partial closure (~24%): reciprocity helps but doesn't fully solve Cleanup's
-  incentive problem at w=50. Worth a window sweep (e.g. w=25 for a more
-  responsive α; w=100 to match the older MAPPO setting).
+  incentive problem at w=50. **Window sweep done (seed 0 — see "Window sweep"):**
+  w=50 is a sharp optimum; both w=25 and w=100 collapse to the floor at ~1e8.
+  Seed-1 confirmation pending.
 - Seed variance is non-trivial (358 vs 553). More seeds would tighten the
   estimate.
 - Mechanism now partially probed (see "Mechanism" and "Schelling diagrams"
   below): α-spread predicts which basin a seed reaches, and co-play shows the
   cooperation is a population-equilibrium effect rather than a transferable
-  reciprocal disposition. Still untested: whether the policy *uses* α at
-  inference (a zeroed-α ablation would settle it).
+  reciprocal disposition. An α-usage ablation (see "α-usage ablation") shows the
+  policy *depends* on α (random α → 0 return) yet does best with α≡0 — α-dependent,
+  but not informative-reciprocity.
 
 ## Mechanism: α-spread predicts which basin a seed reaches
 
@@ -318,6 +326,117 @@ absolute level, as the mechanism signal. The same confound resurfaces in the
 Schelling cleanrate below.
 
 ![Cleanup attribution — α-spread vs basin depth](../sweep_results/attr_w50_partial/cleanup_alpha_spread.png)
+
+## α-usage ablation (w=50 seed 0) — uses α's structure, but is *better off without it*
+
+Does the trained policy actually *use* α? We run the homogeneous all-attr
+population (the training regime) in the wrapper and swap the α the policy sees at
+inference — env dynamics are identical (α never affects transitions), only the
+policy's view changes. `scripts/ablate_alpha_cleanup.py`, 24 episodes:
+
+| α at inference | return/agent | clean-action rate | mean dirt tiles |
+|---|---|---|---|
+| **zero** (α ≡ 0) | **914 ± 14** | 0.078 | 55.8 |
+| **real** (wrapper's true α) | 643 ± 23 | 0.100 | 64.6 |
+| perm/step (shuffle peers every step) | 385 ± 19 | 0.105 | 72.9 |
+| perm/window (shuffle peers once per 50-step window) | 361 ± 24 | 0.107 | 73.5 |
+| random U[0,1] | 0 | 0.035 | 138.9 |
+| random U[0,0.1] (magnitude-matched) | 0 | 0.066 | 138.8 |
+
+(real ≈ the ~553 training plateau — sane.) Four reads:
+
+- **Not inert / not a regularizer.** Random α **collapses return to 0** — the
+  channels are load-bearing.
+- **Not a magnitude artifact.** Magnitude-matched noise (U[0,0.1], same scale as real
+  α ~0.005–0.05) collapses to 0 *just like* U[0,1]. So the policy is sensitive to α's
+  *values/structure*, not merely its scale — it lives on a manifold of plausible α
+  patterns and off-manifold values are fatal.
+- **It uses cross-agent information.** Permuting *which peer* has which α costs ~44%
+  (643→361), and the **cadence-matched** shuffle (perm/window — once per 50 steps,
+  no extra temporal jitter) hurts as much as the per-step one. So the drop is the
+  cross-agent shuffle itself, not jitter: the policy reads α's peer-identity structure.
+- **Yet it's better off without α.** zero (914) > real (643): at convergence the
+  static policy does *best with no signal*.
+
+**Why zero > real — coordination degradation, not exploitation.** We tested the
+"more info lets agents free-ride/exploit" hypothesis directly via the behavioural
+columns. It predicts real α → *less* cleaning. The data shows the **opposite**:
+under real α agents clean **more** (0.100 vs 0.078) yet the river is **dirtier**
+(64.6 vs 55.8) and they earn **less**. So in the *homogeneous* population real α
+isn't free-riding — it's **coordination degradation**: a shared signal all 7 agents
+react to identically → herding / poor spatial coverage → more (futile) cleaning,
+dirtier river, fewer apples. The policy's best regime is genuinely **α≡0** (least
+effort, cleanest river, most apples); every off-real perturbation raises both
+clean-action rate and dirt while lowering return.
+
+**Population-dependence — exploitation *does* appear with a sucker present.** This
+is no contradiction of the Schelling co-play, where a *lone* attribution agent among
+fixed cooperators free-rides (cleanrate ≈ 0) and out-earns a defector. So: **more
+info → exploitation when there are cooperators to exploit (mixed population); among
+identical agents, more info just degrades coordination.** Both fit the headline
+mechanism — **α is a training-time scaffold** (it steers the population into the
+basin; see "Mechanism") that the converged policy over-responds to at inference.
+
+## Window sweep (w ∈ {25, 50, 100}, seed 0) — w=50 is a sharp optimum
+
+The w=50 result raised the obvious knob question: is 50 special, or would a
+shorter/longer α-window do as well? Prediction was an **inverted-U** — too small →
+α is sparse/noisy (clean events fire only ~5% of steps, so a short window mostly
+reads zeros), too large → α is laggy and flat — so return should peak at an
+intermediate w.
+
+**Setup — paired single-seed design.** Seed-to-seed variance is large (the two
+w=50 seeds plateau at 553 vs 358), comparable to the window effect we're chasing.
+To isolate the window, we **hold the seed fixed at 0** and vary only the window —
+a paired design, so any difference across 25→50→100 is the window, not the seed
+draw. We already had w=50/seed0; this adds w=25 and w=100 at seed0, same config as
+every other arm:
+
+```bash
+modal run --detach cleanup/modal_cleanup_baseline.py \
+  --mode calibration --reward-mode individual --seed 0 \
+  --total-timesteps 300000000 --no-parameter-sharing --num-envs 128 \
+  --timeout-minutes 0 --attribution --attribution-window {25,100}
+```
+
+(individual reward, 3e8, PS=False, NUM_ENVS=128, A100-80GB; ~5 h each; both exited
+on the post-training eval crash, training data intact — same as the w=50 runs.)
+
+**Result — w=50 wins decisively; both extremes collapse:**
+
+| window | plateau (final 10%) | peak | gap closure | `alpha_std` rise (3e7–1.35e8) | `alpha_std` plateau |
+|---|---|---|---|---|---|
+| 25 | 82 | 234 | −4% | 0.0302 | 0.0056 |
+| **50** | **553** | 766 | **+31%** | **0.0468** | 0.0366 |
+| 100 | 83 | 405 | −4% | 0.0441 | 0.0339 |
+
+![Cleanup attribution window sweep (seed 0)](../sweep_results/attr_w50_partial/cleanup_window_sweep_seed0.png)
+
+Both w=25 and w=100 reach **lower peaks** (234, 405 vs 766) and then **collapse at
+env_step ≈ 1e8 and never recover within budget**, ending *at/below* the individual
+floor (~140, gap closure −4%). w=50 hits the same ~1e8 instability — the documented
+Cleanup IPPO wobble; the common baseline collapsed there too — but **recovers and
+holds ~550**. So the inverted-U is confirmed in direction: **w=50 is the sweet
+spot**, both shorter and longer windows do worse. (The prior lean "optimum at or
+below 50" was half-right — 50 wins, but 25 didn't beat it: noise/instability
+dominated below 50, the predicted failure mode for too-short windows.)
+
+**Mechanism tie-in (suggestive).** The α-spread story partly carries over: w=50
+**sustains** its cross-agent α-spread after the wobble (`alpha_std` plateau ~0.037),
+while w=25 **loses it entirely** (~0.006 — the shortest window is the most volatile;
+its α craters to noise once cooperation collapses). w=100 is a partial exception —
+it retains moderate spread (~0.034) yet still loses the return, so sustained
+α-spread looks *necessary but not sufficient*. Read the `alpha_std` panel of the
+figure, **not** the mean-α level: the level is confounded (w=25's high mean α during
+the rise — 0.030 vs w=50's 0.005 — is the clean-river artifact; a collapsing run has
+a dirtier river, so clean-beams hit dirt more often).
+
+**Caveat — n=1 per window.** Because the seed is fixed at 0, the *within-seed-0*
+claim is causally clean: for this seed, moving off w=50 causes the collapse. But the
+~1e8 instability is partly stochastic (the common baseline collapsed *and*
+recovered), so whether "w=50 ≫ extremes" **generalizes** is unproven. The
+confirmation is w=25 and w=100 on **seed 1** (the harder, shallow-basin seed;
+w=50/seed1 = 358) — if the ordering holds there, the window optimum is robust.
 
 ## Schelling diagrams (co-play, seed 0)
 
@@ -425,6 +544,13 @@ tit-for-tat.
   seed0 + seed1 run dirs).
 - Mechanism (α-spread): `scripts/plot_cleanup_alpha_spread.py` →
   `cleanup/sweep_results/attr_w50_partial/cleanup_alpha_spread.png`.
+- Window sweep (w=25/50/100, seed0): `scripts/plot_cleanup_window_sweep.py` →
+  `cleanup/sweep_results/attr_w50_partial/cleanup_window_sweep_seed0.png`. Run
+  dirs on the `zkattr-cleanup-baseline` volume:
+  `ippo_cleanup_individual_t300000000_ps0_e128_attrV2_w{25,100}_seed0`.
+- α-usage ablation: `scripts/ablate_alpha_cleanup.py` (6 α controls — real / zero /
+  random×2 / permute-peers×2 — plus clean-action rate & dirt, on the w=50 seed0
+  all-attr population; console table, no figure).
 - Schelling diagrams: `scripts/run_schelling_cleanup.py` (classic),
   `scripts/run_schelling_cleanup_attr.py` (3-curve attribution),
   `scripts/plot_schelling_diagram.py` (renderer). Outputs in
