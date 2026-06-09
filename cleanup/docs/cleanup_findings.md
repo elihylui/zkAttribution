@@ -27,7 +27,14 @@
 > partners coordinate worse, so a free-riding focal's *own* return more than halves
 > (954→368) and the best report is the truth (no sweet spot). So **verification
 > earns nothing *here*** — the signal is exploitation-proof by the policy's response,
-> not by crypto (see "Stage-4 result").
+> not by crypto (see "Stage-4 result"). **Reciprocator extension (2026-06-09):** a
+> *learned* reciprocator exists (common+α uses α positively: real 1312 > zero 690),
+> and lying is *even more* self-defeating against it — a member's over-report
+> *collapses* the commons (964→90, a cliff). So across both regimes + both report
+> directions, honesty dominates → ZK adds nothing **vs a self-interested agent**.
+> **The open exception:** a **malicious saboteur** (willing to tank its own return to
+> wreck the commons) *would* find lying a potent sabotage lever — **ZK would prevent
+> exactly that** (untested; see "Stage-4 extended").
 
 ## TL;DR
 
@@ -521,10 +528,57 @@ here.
   **reciprocator** population — responding to *high* perceived cooperation by
   *sustaining* the commons — would make inflation pay, and *there* ZK would matter.
   So this is "verification unnecessary **here**," not "ever."
-- **Over-report direction only.** A focal that genuinely cooperated (true α>0)
-  might profit by **under**-reporting (claim < true) to keep the aggregate low and
-  the commons rich — a lie ZK *could* catch. Untested; our free-rider focal has
-  nothing to gain in either direction.
+- **Over-report direction here.** A focal that genuinely cooperated (true α>0)
+  might in principle profit by **under**-reporting (claim < true). We tested that
+  next — it doesn't pay either (see "Stage-4 extended").
+
+## Stage-4 extended: under-report, a learned reciprocator, and the saboteur caveat
+
+Three follow-ups completed the self-report picture across *both* attribution regimes.
+
+**(1) Under-report, by a genuine cooperator.** The first under-report attempt was
+vacuous — a common-reward checkpoint dropped into individual-reward co-play
+free-rides (true α≈0), so there was nothing to under-report from. A per-slot probe
+exposed the **clean-river confound directly**: 858 slots 0/5/6 take clean *actions*
+(0.09–0.13) yet read true α≈0 (their beams rarely hit dirt in a clean river) —
+cleaners hidden by the confound, not free-riders. Using a slot with *measurable* α
+(slot 1, true α≈0.065) as the focal — the canonical best-response deviation by an
+equilibrium member — the claim sweep (16 eps) shows **honest is optimal**:
+under-reporting (claim 0) gives no gain (455 vs honest 470, within noise),
+over-reporting is punished. So **no profitable lie in either direction**, bounded
+small by the low equilibrium α.
+
+**(2) A learned reciprocator exists — and lying collapses it.** We trained the arm
+the reciprocator test actually needs: **common reward + α-in-obs** (plateau **1558**,
+≈ the cooperative ceiling). Unlike individual+α, it learned to *use* the signal
+**positively** — homogeneous α-ablation gives **real α 1312 > zero α 690** (the exact
+reverse of individual+α's zero>real). So it genuinely reciprocates. But it is
+**exquisitely fragile**: when a member of this per-agent reciprocity population
+sweeps its self-reported claim, **any over-report collapses the commons** — dirt
+42→103, focal return **964→90**, a cliff (not a gradual decline). The more a
+population actually *uses* the signal, the more a lie destroys the very commons the
+liar depends on. (Note: common+α is *per-agent* attribution, not the 858 aggregate —
+the exploit wrapper has a `per_agent` mode to feed it its native obs format.)
+
+![Stage-4 reciprocator: α-response by regime + the collapse cliff](../selfreport/selfreport_reciprocator.png)
+
+**Unified result.** Across *both* regimes — individual+α (anti-uses the signal,
+over-report *gradually* self-defeating) and common+α (reciprocates, over-report
+*catastrophically* self-defeating) — and in *both directions* (over- and
+under-reporting), **lying is self-defeating, so honesty is the dominant report.** In
+this Cleanup attribution setup, **verification (ZK) earns nothing against a
+self-interested agent** — the signal is exploitation-proof by the game's own
+dynamics, not by crypto.
+
+> **⚠️ The caveat that rescues ZK — a malicious saboteur.** This is the
+> *self-interested* threat model (reward = own apples). A **malicious / griefer**
+> agent — willing to *tank its own return* to collapse everyone's commons (964→90) —
+> would find lying a **powerful sabotage lever**, and **ZK verification would prevent
+> exactly that.** We did **not** test a malicious objective; **that is where
+> verification regains its value.** The self-interest result says "verification is
+> unnecessary *if every agent is selfish*," **not** "verification is useless" —
+> against adversaries who value harm over their own reward, it is essential. This is
+> the single most important open direction for the ZK thesis.
 
 ## Window sweep (w ∈ {25, 50, 100}, seed 0) — w=50 is a sharp optimum
 
@@ -712,6 +766,15 @@ tit-for-tat.
   CSVs: `cleanup/selfreport/exploit_{lying,honest}_seed0.csv`. Partners/focal =
   the w50_sc_seed0 checkpoints (`cleanup/selfreport/partners_sc_seed0/`, gitignored
   pkls). Design spec: `docs/stage4_design.md`.
+- Stage-4 extended (same script, added modes): `--under-report` + `--focal-slot`
+  (cooperator-deviation sweep), `--probe-alpha` (per-slot true α vs clean-action),
+  `--reciprocator` (scripted), `--partner-dir` + `--per-agent` (learned reciprocator
+  with native per-agent obs). Learned reciprocator = common+α run
+  `ippo_cleanup_common_t300000000_ps0_e128_attrV2_w50_seed0` (plateau 1558) →
+  checkpoints `cleanup/selfreport/recip_common_seed0/` (gitignored pkls). α-response
+  via `scripts/ablate_alpha_cleanup.py --attr-dir cleanup/selfreport/recip_common_seed0`.
+  Figure: `scripts/plot_selfreport_reciprocator.py` →
+  `cleanup/selfreport/selfreport_reciprocator.png`.
 - Schelling diagrams: `scripts/run_schelling_cleanup.py` (classic),
   `scripts/run_schelling_cleanup_attr.py` (3-curve attribution),
   `scripts/plot_schelling_diagram.py` (renderer). Outputs in
