@@ -32,9 +32,13 @@
 > and lying is *even more* self-defeating against it — a member's over-report
 > *collapses* the commons (964→90, a cliff). So across both regimes + both report
 > directions, honesty dominates → ZK adds nothing **vs a self-interested agent**.
-> **The open exception:** a **malicious saboteur** (willing to tank its own return to
-> wreck the commons) *would* find lying a potent sabotage lever — **ZK would prevent
-> exactly that** (untested; see "Stage-4 extended").
+> **The exception — now tested (Stage-4 sabotage):** a **malicious saboteur**
+> (reward = −victim welfare) *trained* against the reciprocator population **learns to
+> lie** and drives victim welfare to ~0; with the claim **verified** it can only
+> env-sabotage (which the reciprocators absorb) → welfare stays ~1180. So **ZK saves
+> ~86% of the commons (+1180)** against a malicious agent — verification's value is
+> real but concentrated in the **malicious × signal-reliant × low-direct-leverage**
+> regime (see "Stage-4 sabotage").
 
 ## TL;DR
 
@@ -577,8 +581,70 @@ dynamics, not by crypto.
 > exactly that.** We did **not** test a malicious objective; **that is where
 > verification regains its value.** The self-interest result says "verification is
 > unnecessary *if every agent is selfish*," **not** "verification is useless" —
-> against adversaries who value harm over their own reward, it is essential. This is
-> the single most important open direction for the ZK thesis.
+> against adversaries who value harm over their own reward, it is essential —
+> **now confirmed in "Stage-4 sabotage" below** (a *trained* saboteur collapses a
+> reciprocator population by lying; verification saves ~86% of the commons).
+
+## Stage-4 sabotage: when verification earns its keep (S1 eval + S2 trained)
+
+The self-interest results said verification is moot *if every agent is selfish*. We
+then tested the **malicious** threat model directly — a focal whose reward is
+**−(victim welfare)** (a pure griefer harming the 6 partners).
+
+**S1 — fixed-attack eval** (`--sabotage`): a focal with a fixed worst-case claim ±
+env-sabotage (mask zap_clean), among common+α partners. Victim welfare (mean partner
+return), 32 eps:
+
+| arm | victim welfare |
+|---|---|
+| A cooperative baseline | 1617 |
+| B env-sabotage, honest claim | ~158 |
+| C claim-sabotage only (lie, normal env) | ~136 |
+| D combined | ~100 |
+
+Lying alone (C) is **almost as destructive as env-sabotage** (B). **But the marginal
+value of the claim channel is small** here — `welfare(B) − welfare(D) ≈ +77` —
+because this focal (slot 1, a *key cleaner*) already wrecks the commons via
+env-actions, so the claim is **redundant**.
+
+**S2 — trained saboteur** (`--saboteur`, two A100 arms, 5e7): we *train* the focal
+(claim head + env-action) to minimize victim welfare, vs the common+α reciprocators,
+self-report vs verified:
+
+| trained, slot 6 | self-report | verified |
+|---|---|---|
+| learns to inflate? | **yes — claimed α 0.40→0.53** | n/a (claim overridden) |
+| env-sabotage (true α) | ~0 (doesn't bother) | →0 (stops cleaning) |
+| **victim welfare** | **150 → 2** | **1368 → 1182** |
+
+- **The saboteur learns to lie** — issue-2 does *not* bite for a malicious objective
+  (the gradient lying→victim-harm is strong).
+- **Lying is the dominant weapon against reciprocators.** Verified, the saboteur can
+  only env-sabotage — the 6 reciprocators **absorb** it (welfare 1368→1182, −14%).
+  Unverified, lying **collapses the fragile reciprocity to ~0** (→2).
+- **Trained ZK marginal value = welfare(verified) − welfare(self-report) = 1182 − 2
+  ≈ +1180 (~86% of the commons saved).**
+
+![S2 trained saboteur — verification saves the commons](../selfreport/selfreport_saboteur.png)
+
+**Why S1 said +77 and S2 says +1180 — the principle.** S1's focal (slot 1, a key
+cleaner) could wreck the commons *directly*, so the claim was redundant. S2's focal
+(slot 6, a minor cleaner) has weak direct leverage — its env-sabotage is *absorbed* —
+so **the claim is its only effective weapon**:
+
+> **ZK's value is high precisely when the population *relies* on the signal AND the
+> attacker's *direct-action* leverage is limited.** A robust reciprocator population
+> absorbs direct sabotage but is catastrophically fragile to signal corruption —
+> exactly the regime where verification is essential. (n=1 seed; the within-S2,
+> same-slot self-report-vs-verified comparison is the clean one. Follow-up: a
+> trained saboteur at slot 1 — a key cleaner — should show the claim become
+> *redundant* again, mapping ZK-value vs attacker leverage.)
+
+**The complete ZK verdict (both bookends).** Self-interested agent → lying
+self-defeating → ZK earns nothing. Malicious agent vs a reciprocity-using population
+→ lying is the dominant attack and **ZK saves ~86% of the commons.** Verification's
+value is not universal — it is concentrated in the **malicious × signal-reliant ×
+low-direct-leverage** regime.
 
 ## Window sweep (w ∈ {25, 50, 100}, seed 0) — w=50 is a sharp optimum
 
@@ -775,6 +841,15 @@ tit-for-tat.
   via `scripts/ablate_alpha_cleanup.py --attr-dir cleanup/selfreport/recip_common_seed0`.
   Figure: `scripts/plot_selfreport_reciprocator.py` →
   `cleanup/selfreport/selfreport_reciprocator.png`.
+- Stage-4 sabotage (S1/S2): `--sabotage` (4-arm eval, `--focal-sees-true` split +
+  victim-welfare logging), `--saboteur` (trained malicious focal: reward =
+  −victim welfare, claim+env levers). S2 CSVs:
+  `cleanup/selfreport/saboteur_{selfreport,verified}_seed0.csv` (run dirs on volume
+  `selfreport_exploit/`). Figure: `scripts/plot_selfreport_saboteur.py` →
+  `cleanup/selfreport/selfreport_saboteur.png`.
+- Fast A100 eval launcher: `cleanup/modal_eval.py` — runs any
+  `train_selfreport_exploit.py`/`scripts/*` eval mode on A100 reading checkpoints
+  from the volume (`{sc}`/`{recip}` placeholders); ~10× faster than local CPU.
 - Schelling diagrams: `scripts/run_schelling_cleanup.py` (classic),
   `scripts/run_schelling_cleanup_attr.py` (3-curve attribution),
   `scripts/plot_schelling_diagram.py` (renderer). Outputs in
