@@ -636,9 +636,22 @@ so **the claim is its only effective weapon**:
 > attacker's *direct-action* leverage is limited.** A robust reciprocator population
 > absorbs direct sabotage but is catastrophically fragile to signal corruption —
 > exactly the regime where verification is essential. (n=1 seed; the within-S2,
-> same-slot self-report-vs-verified comparison is the clean one. Follow-up: a
-> trained saboteur at slot 1 — a key cleaner — should show the claim become
-> *redundant* again, mapping ZK-value vs attacker leverage.)
+> same-slot self-report-vs-verified comparison is the clean one.)
+
+**Confirmed — ZK value vs attacker leverage (2 points).** A *trained* saboteur at
+**slot 1 (a key cleaner)**: verified → victims 190, self-report → 134, so **ZK
+marginal = +56** — env-sabotage *alone* collapses the commons (1647→190; the focal
+learns to stop cleaning, true α 0.084→0.011), making the claim **redundant**, exactly
+like S1.
+
+| saboteur focal | direct (env) leverage | ZK marginal value |
+|---|---|---|
+| **slot 1** (key cleaner) | high — env-sabotage suffices | **+56** (claim redundant) |
+| **slot 6** (minor cleaner) | low — reciprocators absorb env-sabotage | **+1180** (claim essential) |
+
+So ZK's marginal value is **inversely related to the attacker's direct-action
+leverage**: verification matters most against adversaries who *can't* do much harm
+directly but *can* corrupt the shared signal a reciprocity population depends on.
 
 **The complete ZK verdict (both bookends).** Self-interested agent → lying
 self-defeating → ZK earns nothing. Malicious agent vs a reciprocity-using population
